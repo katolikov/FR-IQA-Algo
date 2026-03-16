@@ -18,6 +18,7 @@ class MockUPIQAL(nn.Module):
 
     Produces a realistic-looking FR-IQA score and a 5-channel diagnostic
     tensor using simple pixel-level operations (no deep network required).
+    Also computes diagnostic statistics for the dashboard.
     """
 
     def __init__(self) -> None:
@@ -55,6 +56,7 @@ class MockUPIQAL(nn.Module):
         dict
             ``"score"`` : ``(B,)`` quality score in ``[0, 1]``.
             ``"diagnostic_tensor"`` : ``(B, 5, H, W)`` multi-channel mask.
+            ``"diagnostics"`` : dict with severity scores and statistics.
         """
         B, C, H, W = ref.shape
 
@@ -67,7 +69,6 @@ class MockUPIQAL(nn.Module):
         color_map = color_diff / (color_diff.max() + 1e-12)
 
         # --- Channel 2: Structural similarity (inverted local MSE) ---
-        # Use a simple local mean difference
         kernel = torch.ones(1, 1, 7, 7, device=ref.device) / 49.0
         ref_g = self._to_gray(ref)
         tgt_g = self._to_gray(tgt)
@@ -78,7 +79,6 @@ class MockUPIQAL(nn.Module):
         # --- Channel 3: Blocking mask (modulo-8 gradient spikes) ---
         gx = F.conv2d(tgt_g, self.sobel_x, padding=1).abs()
         blocking = torch.zeros_like(tgt_g)
-        # Flag pixels at 8-pixel grid boundaries
         for k in range(0, W, 8):
             if k < W:
                 blocking[:, :, :, k] = gx[:, :, :, min(k, W - 1)]
@@ -107,7 +107,59 @@ class MockUPIQAL(nn.Module):
             [anomaly, color_map, ssim_approx, blocking, ringing], dim=1
         )
 
+        # --- Diagnostic statistics (new) ---
+        total_pixels = float(H * W)
+
+        # Severity scores: mean activation × 100 → percentage
+        blocking_severity = float(blocking.mean().item()) * 100.0
+        ringing_severity = float(ringing.mean().item()) * 100.0
+        color_severity = float(color_map.mean().item()) * 100.0
+        # Noise: approximate via high-frequency content difference
+        noise_severity = float((anomaly * (1.0 - ssim_approx)).mean().item()) * 100.0
+        # Blur: inverse of structural preservation
+        blur_severity = float((1.0 - ssim_approx).mean().item()) * 100.0
+
+        # Scale severities so the max among them is plausible (up to ~80)
+        severities = {
+            "blocking": min(round(blocking_severity * 8.0, 1), 100.0),
+            "ringing": min(round(ringing_severity * 12.0, 1), 100.0),
+            "noise": min(round(noise_severity * 10.0, 1), 100.0),
+            "color_shift": min(round(color_severity * 6.0, 1), 100.0),
+            "blur": min(round(blur_severity * 5.0, 1), 100.0),
+        }
+
+        # Anomaly threshold for "affected area"
+        anomaly_thresh = 0.15
+        affected_pixels = float((anomaly > anomaly_thresh).float().sum().item())
+        affected_area = round((affected_pixels / total_pixels) * 100.0, 1)
+
+        # Dominant artifact
+        worst_key = max(severities, key=severities.get)  # type: ignore[arg-type]
+        severity_labels = {
+            "blocking": "JPEG Blocking",
+            "ringing": "Gibbs Ringing",
+            "noise": "Noise",
+            "color_shift": "Color Shift",
+            "blur": "Blur",
+        }
+        worst_val = severities[worst_key]
+        if worst_val < 10:
+            dominant = "Negligible Artifacts"
+        elif worst_val < 30:
+            dominant = f"Mild {severity_labels[worst_key]}"
+        elif worst_val < 60:
+            dominant = f"Moderate {severity_labels[worst_key]}"
+        else:
+            dominant = f"Severe {severity_labels[worst_key]}"
+
+        diagnostics = {
+            "dominant_artifact": dominant,
+            "severities": severities,
+            "affected_area": affected_area,
+        }
+
         return {
             "score": score,
             "diagnostic_tensor": diagnostic,
+            "diagnostics": diagnostics,
         }

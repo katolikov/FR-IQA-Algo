@@ -10,21 +10,30 @@
       theme: {
         extend: {
           colors: {
-            brand: { 50: '#eef2ff', 100: '#e0e7ff', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca', 900: '#312e81' },
+            brand: { 50:'#eef2ff',100:'#e0e7ff',500:'#6366f1',600:'#4f46e5',700:'#4338ca',900:'#312e81' },
+            surface: { 800:'#1e1b2e', 900:'#13111c', 950:'#0c0a14' },
           }
         }
       }
     }
   </script>
   <style>
-    /* Drag-over highlight */
-    .drop-zone.dragover { @apply ring-4 ring-brand-500/50 bg-brand-50; }
-    /* Score gauge animation */
+    .drop-zone.dragover { @apply ring-4 ring-brand-500/50 bg-brand-900/20; }
     @keyframes gauge-fill { from { width: 0%; } }
-    .gauge-bar { animation: gauge-fill 0.8s ease-out; }
-    /* Fade-in for results */
-    @keyframes fade-up { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+    .gauge-bar { animation: gauge-fill 1s cubic-bezier(.4,0,.2,1); }
+    @keyframes fade-up { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
     .fade-up { animation: fade-up 0.5s ease-out both; }
+    @keyframes count-up { from { opacity: 0; } to { opacity: 1; } }
+    /* Severity bar animation */
+    @keyframes bar-grow { from { width: 0%; } }
+    .severity-bar { animation: bar-grow 0.8s ease-out both; }
+    /* Slider thumb */
+    input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; height:18px; border-radius:50%; background:#6366f1; cursor:pointer; border:2px solid #fff; box-shadow:0 0 6px rgba(99,102,241,.5); }
+    input[type=range]::-moz-range-thumb { width:18px; height:18px; border-radius:50%; background:#6366f1; cursor:pointer; border:2px solid #fff; box-shadow:0 0 6px rgba(99,102,241,.5); }
+    /* Active gallery tab */
+    .hm-tab.active { @apply ring-2 ring-brand-500 brightness-110; }
+    /* Radial score gauge */
+    .score-ring { transition: stroke-dashoffset 1.2s cubic-bezier(.4,0,.2,1); }
   </style>
 </head>
 
@@ -33,45 +42,43 @@
   <!-- ================================================================= -->
   <!-- HEADER                                                            -->
   <!-- ================================================================= -->
-  <header class="sticky top-0 z-50 border-b border-gray-800 bg-gray-950/80 backdrop-blur-md">
-    <div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+  <header class="sticky top-0 z-50 border-b border-gray-800/60 bg-gray-950/80 backdrop-blur-xl">
+    <div class="mx-auto flex max-w-7xl items-center justify-between px-6 py-3">
       <div class="flex items-center gap-3">
-        <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 font-bold text-white text-sm">U</div>
+        <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 font-bold text-white text-sm shadow-lg shadow-brand-600/30">U</div>
         <div>
           <h1 class="text-lg font-semibold tracking-tight">UPIQAL</h1>
-          <p class="text-xs text-gray-400">Unified Probabilistic Image Quality &amp; Artifact Locator</p>
+          <p class="text-[11px] text-gray-500">Unified Probabilistic Image Quality &amp; Artifact Locator</p>
         </div>
       </div>
-      <span class="hidden sm:block rounded-full bg-gray-800 px-3 py-1 text-xs text-gray-400">FR-IQA v0.1</span>
+      <span class="hidden sm:block rounded-full bg-gray-800/60 px-3 py-1 text-xs text-gray-400">FR-IQA v0.2</span>
     </div>
   </header>
 
-  <main class="mx-auto max-w-6xl px-6 py-10 space-y-12">
+  <main class="mx-auto max-w-7xl px-6 py-10 space-y-12">
 
     <!-- ================================================================= -->
     <!-- UPLOAD SECTION                                                    -->
     <!-- ================================================================= -->
     <section>
       <h2 class="mb-6 text-center text-2xl font-semibold">Upload Images for Comparison</h2>
-
       <div class="grid gap-6 sm:grid-cols-2">
         <!-- Reference -->
         <div>
           <label class="mb-2 block text-sm font-medium text-gray-300">Reference Image</label>
           <div id="drop-ref"
-               class="drop-zone relative flex h-56 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-700 bg-gray-900 transition hover:border-brand-500">
+               class="drop-zone relative flex h-56 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-700 bg-gray-900/50 transition hover:border-brand-500">
             <input id="input-ref" type="file" accept="image/*" class="absolute inset-0 cursor-pointer opacity-0" />
             <svg class="mb-2 h-8 w-8 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 16V4m0 0L8 8m4-4l4 4M4 20h16"/></svg>
             <p class="text-sm text-gray-400">Drag &amp; drop or <span class="text-brand-500 underline">browse</span></p>
             <img id="preview-ref" class="absolute inset-0 hidden h-full w-full rounded-xl object-contain p-2" alt="Reference preview" />
           </div>
         </div>
-
         <!-- Target -->
         <div>
           <label class="mb-2 block text-sm font-medium text-gray-300">Target / Distorted Image</label>
           <div id="drop-tgt"
-               class="drop-zone relative flex h-56 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-700 bg-gray-900 transition hover:border-brand-500">
+               class="drop-zone relative flex h-56 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-700 bg-gray-900/50 transition hover:border-brand-500">
             <input id="input-tgt" type="file" accept="image/*" class="absolute inset-0 cursor-pointer opacity-0" />
             <svg class="mb-2 h-8 w-8 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 16V4m0 0L8 8m4-4l4 4M4 20h16"/></svg>
             <p class="text-sm text-gray-400">Drag &amp; drop or <span class="text-brand-500 underline">browse</span></p>
@@ -79,7 +86,6 @@
           </div>
         </div>
       </div>
-
       <!-- Run button -->
       <div class="mt-8 text-center">
         <button id="btn-run" disabled
@@ -93,54 +99,94 @@
     <!-- ================================================================= -->
     <!-- RESULTS SECTION (hidden until analysis completes)                 -->
     <!-- ================================================================= -->
-    <section id="results" class="hidden space-y-10">
+    <section id="results" class="hidden space-y-8">
 
-      <!-- Score -->
-      <div class="fade-up rounded-2xl border border-gray-800 bg-gray-900 p-8 text-center">
-        <p class="mb-1 text-sm uppercase tracking-widest text-gray-400">FR-IQA Quality Score</p>
-        <p id="score-value" class="text-6xl font-extrabold tabular-nums tracking-tight">--</p>
-
-        <!-- Gauge bar -->
-        <div class="mx-auto mt-4 h-3 max-w-md overflow-hidden rounded-full bg-gray-800">
-          <div id="score-bar" class="gauge-bar h-full rounded-full" style="width:0%"></div>
-        </div>
-        <p id="score-label" class="mt-2 text-sm text-gray-400"></p>
-      </div>
-
-      <!-- Overlay -->
-      <div class="fade-up rounded-2xl border border-gray-800 bg-gray-900 p-6" style="animation-delay:.1s">
-        <h3 class="mb-4 text-lg font-semibold">Anomaly Overlay</h3>
-        <div class="flex justify-center">
-          <img id="overlay-img" class="max-h-96 rounded-lg" alt="Overlay" />
-        </div>
-      </div>
-
-      <!-- Diagnostic heatmaps -->
-      <div class="fade-up rounded-2xl border border-gray-800 bg-gray-900 p-6" style="animation-delay:.2s">
-        <h3 class="mb-4 text-lg font-semibold">Diagnostic Heatmaps</h3>
-        <div class="grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
-          <div class="text-center">
-            <p class="mb-1 text-xs font-medium text-gray-400">Global Anomaly</p>
-            <img id="hm-anomaly" class="w-full rounded-lg border border-gray-800" alt="Anomaly" />
-          </div>
-          <div class="text-center">
-            <p class="mb-1 text-xs font-medium text-gray-400">Color Degradation</p>
-            <img id="hm-color" class="w-full rounded-lg border border-gray-800" alt="Color" />
-          </div>
-          <div class="text-center">
-            <p class="mb-1 text-xs font-medium text-gray-400">Structural Similarity</p>
-            <img id="hm-structure" class="w-full rounded-lg border border-gray-800" alt="Structure" />
-          </div>
-          <div class="text-center">
-            <p class="mb-1 text-xs font-medium text-gray-400">JPEG Blocking</p>
-            <img id="hm-blocking" class="w-full rounded-lg border border-gray-800" alt="Blocking" />
-          </div>
-          <div class="text-center">
-            <p class="mb-1 text-xs font-medium text-gray-400">Gibbs Ringing</p>
-            <img id="hm-ringing" class="w-full rounded-lg border border-gray-800" alt="Ringing" />
+      <!-- ROW 1: Executive Summary ====================================== -->
+      <div class="fade-up grid gap-6 lg:grid-cols-3">
+        <!-- Score Gauge (radial) -->
+        <div class="flex flex-col items-center justify-center rounded-2xl border border-gray-800 bg-gray-900/70 p-8">
+          <p class="mb-3 text-xs uppercase tracking-widest text-gray-500">FR-IQA Quality Score</p>
+          <div class="relative h-44 w-44">
+            <svg viewBox="0 0 120 120" class="h-full w-full -rotate-90">
+              <circle cx="60" cy="60" r="52" fill="none" stroke="#1f2937" stroke-width="10"/>
+              <circle id="score-ring" cx="60" cy="60" r="52" fill="none"
+                      stroke="#22c55e" stroke-width="10" stroke-linecap="round"
+                      stroke-dasharray="326.73" stroke-dashoffset="326.73"
+                      class="score-ring"/>
+            </svg>
+            <div class="absolute inset-0 flex flex-col items-center justify-center">
+              <span id="score-value" class="text-4xl font-extrabold tabular-nums">--</span>
+              <span id="score-label" class="text-xs text-gray-400 mt-1"></span>
+            </div>
           </div>
         </div>
+
+        <!-- Dominant Artifact + Affected Area -->
+        <div class="flex flex-col justify-center rounded-2xl border border-gray-800 bg-gray-900/70 p-8 space-y-5">
+          <div>
+            <p class="text-xs uppercase tracking-widest text-gray-500 mb-1">Dominant Artifact</p>
+            <p id="dominant-artifact" class="text-xl font-bold text-red-400">--</p>
+          </div>
+          <div>
+            <p class="text-xs uppercase tracking-widest text-gray-500 mb-1">Affected Area</p>
+            <div class="flex items-end gap-2">
+              <span id="affected-area" class="text-3xl font-extrabold tabular-nums">--</span>
+              <span class="text-sm text-gray-400 mb-1">% of pixels</span>
+            </div>
+            <div class="mt-2 h-2 w-full rounded-full bg-gray-800 overflow-hidden">
+              <div id="affected-bar" class="severity-bar h-full rounded-full bg-amber-500" style="width:0%"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Severity Breakdown -->
+        <div class="rounded-2xl border border-gray-800 bg-gray-900/70 p-8">
+          <p class="text-xs uppercase tracking-widest text-gray-500 mb-4">Artifact Severity</p>
+          <div class="space-y-3" id="severity-bars">
+            <!-- Filled by JS -->
+          </div>
+          <!-- Export button -->
+          <button id="btn-export" class="mt-5 w-full inline-flex items-center justify-center gap-2 rounded-lg border border-gray-700 bg-gray-800 px-4 py-2 text-sm font-medium text-gray-300 transition hover:bg-gray-700 hover:text-white">
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4"/></svg>
+            Download JSON Report
+          </button>
+        </div>
       </div>
+
+      <!-- ROW 2: Interactive Workspace ================================== -->
+      <div class="fade-up grid gap-6 lg:grid-cols-[1fr_320px]" style="animation-delay:.15s">
+
+        <!-- Main Display (large) -->
+        <div class="rounded-2xl border border-gray-800 bg-gray-900/70 p-6">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-semibold">Interactive Diagnostic View</h3>
+            <span id="active-layer-label" class="text-xs text-gray-400 bg-gray-800 rounded-full px-3 py-1">Anomaly Overlay</span>
+          </div>
+
+          <!-- Composite viewport: target underneath, heatmap on top -->
+          <div id="viewport" class="relative mx-auto overflow-hidden rounded-lg bg-gray-950" style="max-height:520px">
+            <img id="view-base" class="block w-full" alt="Target" />
+            <img id="view-heatmap" class="absolute inset-0 w-full h-full object-contain" alt="Heatmap overlay" style="opacity:0.5; mix-blend-mode:screen;" />
+          </div>
+
+          <!-- Opacity slider -->
+          <div class="mt-4 flex items-center gap-4">
+            <label for="opacity-slider" class="text-xs text-gray-400 whitespace-nowrap min-w-[80px]">Overlay Opacity</label>
+            <input id="opacity-slider" type="range" min="0" max="100" value="50" class="flex-1 h-2 bg-gray-800 rounded-lg appearance-none cursor-pointer accent-brand-500" />
+            <span id="opacity-val" class="text-xs tabular-nums text-gray-400 w-10 text-right">50%</span>
+          </div>
+        </div>
+
+        <!-- Heatmap Gallery (right sidebar) -->
+        <div class="rounded-2xl border border-gray-800 bg-gray-900/70 p-5 space-y-3">
+          <h3 class="text-sm font-semibold text-gray-300 mb-2">Diagnostic Layers</h3>
+
+          <div id="hm-gallery" class="space-y-2">
+            <!-- Filled by JS — each item is a clickable card -->
+          </div>
+        </div>
+      </div>
+
     </section>
 
     <!-- Error banner -->
@@ -158,23 +204,45 @@
   <!-- SCRIPT                                                            -->
   <!-- ================================================================= -->
   <script>
-    // ----- State -----
+    // =====================================================================
+    // State
+    // =====================================================================
     let refFile = null;
     let tgtFile = null;
+    let lastResult = null; // store full JSON for export
 
-    const btnRun     = document.getElementById('btn-run');
-    const btnLabel   = document.getElementById('btn-label');
-    const spinner    = document.getElementById('spinner');
-    const results    = document.getElementById('results');
-    const errorBanner= document.getElementById('error-banner');
+    const btnRun      = document.getElementById('btn-run');
+    const btnLabel    = document.getElementById('btn-label');
+    const spinner     = document.getElementById('spinner');
+    const results     = document.getElementById('results');
+    const errorBanner = document.getElementById('error-banner');
 
-    // ----- File handling helpers -----
+    // Channel metadata
+    const CHANNELS = [
+      { key: 'overlay',   label: 'Anomaly Overlay',      color: '#ef4444' },
+      { key: 'anomaly',   label: 'Global Anomaly',        color: '#f97316' },
+      { key: 'color',     label: 'Color Degradation',     color: '#a855f7' },
+      { key: 'structure', label: 'Structural Similarity',  color: '#3b82f6' },
+      { key: 'blocking',  label: 'JPEG Blocking',          color: '#eab308' },
+      { key: 'ringing',   label: 'Gibbs Ringing',          color: '#06b6d4' },
+    ];
+
+    const SEVERITY_META = [
+      { key: 'blocking',    label: 'JPEG Blocking', color: '#eab308' },
+      { key: 'ringing',     label: 'Gibbs Ringing', color: '#06b6d4' },
+      { key: 'noise',       label: 'Noise',         color: '#f97316' },
+      { key: 'color_shift', label: 'Color Shift',   color: '#a855f7' },
+      { key: 'blur',        label: 'Blur',          color: '#3b82f6' },
+    ];
+
+    // =====================================================================
+    // File Handling
+    // =====================================================================
     function setupDropZone(dropId, inputId, previewId, onFile) {
       const zone  = document.getElementById(dropId);
       const input = document.getElementById(inputId);
       const prev  = document.getElementById(previewId);
 
-      // Drag events
       zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
       zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
       zone.addEventListener('drop', e => {
@@ -182,19 +250,13 @@
         zone.classList.remove('dragover');
         if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
       });
-
-      // Click / input
       input.addEventListener('change', () => { if (input.files.length) handleFile(input.files[0]); });
 
       function handleFile(file) {
         if (!file.type.startsWith('image/')) return;
         onFile(file);
-        // Preview
         const reader = new FileReader();
-        reader.onload = () => {
-          prev.src = reader.result;
-          prev.classList.remove('hidden');
-        };
+        reader.onload = () => { prev.src = reader.result; prev.classList.remove('hidden'); };
         reader.readAsDataURL(file);
         updateRunButton();
       }
@@ -203,20 +265,19 @@
     setupDropZone('drop-ref', 'input-ref', 'preview-ref', f => { refFile = f; });
     setupDropZone('drop-tgt', 'input-tgt', 'preview-tgt', f => { tgtFile = f; });
 
-    function updateRunButton() {
-      btnRun.disabled = !(refFile && tgtFile);
-    }
+    function updateRunButton() { btnRun.disabled = !(refFile && tgtFile); }
 
-    // ----- Run analysis -----
+    // =====================================================================
+    // Run Analysis
+    // =====================================================================
     btnRun.addEventListener('click', async () => {
       if (!refFile || !tgtFile) return;
       errorBanner.classList.add('hidden');
       results.classList.add('hidden');
 
-      // UI: loading state
       btnRun.disabled = true;
       spinner.classList.remove('hidden');
-      btnLabel.textContent = 'Processing...';
+      btnLabel.textContent = 'Processing…';
 
       try {
         const form = new FormData();
@@ -224,11 +285,9 @@
         form.append('target_image', tgtFile);
 
         const res = await fetch('/api/compare', { method: 'POST', body: form });
-        if (!res.ok) {
-          const text = await res.text();
-          throw new Error(`Server error ${res.status}: ${text}`);
-        }
+        if (!res.ok) throw new Error(`Server error ${res.status}: ${await res.text()}`);
         const data = await res.json();
+        lastResult = data;
         renderResults(data);
       } catch (err) {
         errorBanner.textContent = err.message;
@@ -240,45 +299,151 @@
       }
     });
 
-    // ----- Render results -----
+    // =====================================================================
+    // Render Results
+    // =====================================================================
     function renderResults(data) {
       const score = data.score;
 
-      // Score text
+      // --- Radial gauge ---
+      const circumference = 2 * Math.PI * 52; // r=52
+      const ring = document.getElementById('score-ring');
+      const offset = circumference * (1 - score);
+      ring.style.strokeDashoffset = offset;
+
+      // Color: red < 0.4, yellow < 0.7, green ≥ 0.7
+      let ringColor;
+      if (score < 0.4)      ringColor = '#ef4444';
+      else if (score < 0.7) ringColor = '#eab308';
+      else                   ringColor = '#22c55e';
+      ring.setAttribute('stroke', ringColor);
+
       document.getElementById('score-value').textContent = score.toFixed(4);
 
-      // Gauge bar
-      const pct = Math.round(score * 100);
-      const bar = document.getElementById('score-bar');
-      bar.style.width = pct + '%';
-
-      // Color gradient: red -> yellow -> green
-      let barColor;
-      if (score < 0.4) barColor = '#ef4444';
-      else if (score < 0.7) barColor = '#eab308';
-      else barColor = '#22c55e';
-      bar.style.backgroundColor = barColor;
-
-      // Label
       let label;
-      if (score >= 0.9) label = 'Excellent quality';
-      else if (score >= 0.7) label = 'Good quality';
-      else if (score >= 0.5) label = 'Moderate degradation';
-      else if (score >= 0.3) label = 'Poor quality';
-      else label = 'Severe degradation';
+      if (score >= 0.9)      label = 'Excellent';
+      else if (score >= 0.7) label = 'Good';
+      else if (score >= 0.5) label = 'Moderate';
+      else if (score >= 0.3) label = 'Poor';
+      else                    label = 'Severe';
       document.getElementById('score-label').textContent = label;
 
-      // Overlay
-      document.getElementById('overlay-img').src = 'data:image/png;base64,' + data.overlay;
+      // --- Diagnostics ---
+      const diag = data.diagnostics || {};
+      document.getElementById('dominant-artifact').textContent = diag.dominant_artifact || '—';
 
-      // Heatmaps
-      for (const key of ['anomaly', 'color', 'structure', 'blocking', 'ringing']) {
-        document.getElementById('hm-' + key).src = 'data:image/png;base64,' + data.heatmaps[key];
+      // Color-code the dominant artifact text
+      const domEl = document.getElementById('dominant-artifact');
+      const domText = (diag.dominant_artifact || '').toLowerCase();
+      if (domText.includes('severe'))        domEl.className = 'text-xl font-bold text-red-400';
+      else if (domText.includes('moderate')) domEl.className = 'text-xl font-bold text-amber-400';
+      else if (domText.includes('mild'))     domEl.className = 'text-xl font-bold text-yellow-300';
+      else                                    domEl.className = 'text-xl font-bold text-green-400';
+
+      const area = diag.affected_area ?? 0;
+      document.getElementById('affected-area').textContent = area.toFixed(1);
+      document.getElementById('affected-bar').style.width = Math.min(area, 100) + '%';
+
+      // --- Severity bars ---
+      const container = document.getElementById('severity-bars');
+      container.innerHTML = '';
+      const sevs = diag.severities || {};
+      SEVERITY_META.forEach((m, i) => {
+        const val = sevs[m.key] ?? 0;
+        const row = document.createElement('div');
+        row.innerHTML = `
+          <div class="flex items-center justify-between text-xs mb-1">
+            <span class="text-gray-300">${m.label}</span>
+            <span class="tabular-nums font-medium" style="color:${m.color}">${val.toFixed(1)}%</span>
+          </div>
+          <div class="h-1.5 rounded-full bg-gray-800 overflow-hidden">
+            <div class="severity-bar h-full rounded-full" style="width:${Math.min(val,100)}%;background:${m.color};animation-delay:${i*0.1}s"></div>
+          </div>`;
+        container.appendChild(row);
+      });
+
+      // --- Build image source map ---
+      const imgSrc = {};
+      imgSrc['overlay'] = 'data:image/png;base64,' + data.overlay;
+      for (const key of ['anomaly','color','structure','blocking','ringing']) {
+        imgSrc[key] = 'data:image/png;base64,' + data.heatmaps[key];
       }
+      const targetSrc = 'data:image/png;base64,' + data.target;
 
+      // --- Heatmap gallery ---
+      const gallery = document.getElementById('hm-gallery');
+      gallery.innerHTML = '';
+      CHANNELS.forEach((ch, idx) => {
+        const card = document.createElement('button');
+        card.className = 'hm-tab flex items-center gap-3 w-full rounded-lg border border-gray-700/50 bg-gray-800/50 p-2 text-left transition hover:bg-gray-800 ' + (idx === 0 ? 'active' : '');
+        card.dataset.key = ch.key;
+        card.innerHTML = `
+          <img src="${imgSrc[ch.key]}" class="h-12 w-12 rounded object-cover flex-shrink-0" alt="${ch.label}" />
+          <div>
+            <p class="text-xs font-medium text-gray-200">${ch.label}</p>
+            <div class="mt-0.5 h-1 w-8 rounded-full" style="background:${ch.color}"></div>
+          </div>`;
+        card.addEventListener('click', () => selectLayer(ch.key, ch.label, imgSrc, targetSrc));
+        gallery.appendChild(card);
+      });
+
+      // --- Set initial viewport ---
+      document.getElementById('view-base').src = targetSrc;
+      document.getElementById('view-heatmap').src = imgSrc['overlay'];
+      document.getElementById('active-layer-label').textContent = 'Anomaly Overlay';
+
+      // Reset opacity slider
+      const slider = document.getElementById('opacity-slider');
+      slider.value = 50;
+      document.getElementById('opacity-val').textContent = '50%';
+      document.getElementById('view-heatmap').style.opacity = 0.5;
+
+      // --- Show results ---
       results.classList.remove('hidden');
       results.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
+
+    // =====================================================================
+    // Layer Selection
+    // =====================================================================
+    function selectLayer(key, label, imgSrc, targetSrc) {
+      // Update active tab
+      document.querySelectorAll('.hm-tab').forEach(t => t.classList.remove('active'));
+      document.querySelector(`.hm-tab[data-key="${key}"]`).classList.add('active');
+
+      document.getElementById('active-layer-label').textContent = label;
+      document.getElementById('view-base').src = targetSrc;
+      document.getElementById('view-heatmap').src = imgSrc[key];
+    }
+
+    // =====================================================================
+    // Opacity Slider
+    // =====================================================================
+    const opSlider = document.getElementById('opacity-slider');
+    opSlider.addEventListener('input', () => {
+      const v = opSlider.value;
+      document.getElementById('view-heatmap').style.opacity = v / 100;
+      document.getElementById('opacity-val').textContent = v + '%';
+    });
+
+    // =====================================================================
+    // JSON Export
+    // =====================================================================
+    document.getElementById('btn-export').addEventListener('click', () => {
+      if (!lastResult) return;
+      const report = {
+        timestamp: new Date().toISOString(),
+        score: lastResult.score,
+        diagnostics: lastResult.diagnostics,
+      };
+      const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'upiqal-report-' + Date.now() + '.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
   </script>
 </body>
 </html>

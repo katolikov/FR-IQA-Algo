@@ -2,7 +2,7 @@
 
 Serves the frontend and exposes a POST /api/compare endpoint that accepts
 two uploaded images, runs the UPIQAL model (mock by default), and returns
-the FR-IQA score plus Base64-encoded diagnostic heatmaps.
+the FR-IQA score, Base64-encoded diagnostic heatmaps, and rich statistics.
 
 Usage:
     cd web
@@ -142,20 +142,8 @@ async def compare(
     Accepts multipart/form-data with ``reference_image`` and
     ``target_image`` fields.
 
-    Returns JSON:
-    ```json
-    {
-      "score": 0.87,
-      "heatmaps": {
-        "anomaly":   "<base64 PNG>",
-        "color":     "<base64 PNG>",
-        "structure": "<base64 PNG>",
-        "blocking":  "<base64 PNG>",
-        "ringing":   "<base64 PNG>"
-      },
-      "overlay": "<base64 PNG>"
-    }
-    ```
+    Returns JSON with score, heatmaps, overlay, target preview, and
+    diagnostic statistics.
     """
     ref_bytes = await reference_image.read()
     tgt_bytes = await target_image.read()
@@ -176,6 +164,7 @@ async def compare(
 
     score = float(result["score"][0].item())
     diag = result["diagnostic_tensor"]  # (1, 5, H, W)
+    diagnostics = result["diagnostics"]
 
     channel_names = ["anomaly", "color", "structure", "blocking", "ringing"]
     heatmaps = {}
@@ -199,8 +188,13 @@ async def compare(
     blended_img.save(buf, format="PNG")
     overlay_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
+    # Also send the target image so the frontend can do client-side blending
+    target_b64 = tensor_to_base64(tgt_tensor)
+
     return {
         "score": round(score, 4),
         "heatmaps": heatmaps,
         "overlay": overlay_b64,
+        "target": target_b64,
+        "diagnostics": diagnostics,
     }
