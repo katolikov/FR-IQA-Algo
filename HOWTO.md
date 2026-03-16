@@ -51,22 +51,7 @@ pip install -r requirements.txt
 | `POT` | Sinkhorn–Knopp optimal transport (EMD approximation) |
 | `colour-science` | sRGB → Oklab color space conversion |
 
-## 4. (Optional) GPU setup
-
-UPIQAL runs on CPU by default. For GPU acceleration install the CUDA-enabled build of PyTorch:
-
-```bash
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-```
-
-Verify CUDA is available:
-
-```python
-import torch
-print(torch.cuda.is_available())
-```
-
-## 5. Outputs
+## 4. Outputs
 
 The script writes the following to `--output-dir`:
 
@@ -81,7 +66,7 @@ results/
 └── noise_mask.png         # Gaussian noise mask
 ```
 
-## 6. Start the web server
+## 5. Start the web server
 
 Install `uvicorn` if not already included in your requirements:
 
@@ -106,7 +91,7 @@ The API will be available at `http://localhost:8000`.
 
 Remove `--reload` in production.
 
-## 7. Deactivate the virtual environment
+## 6. Deactivate the virtual environment
 
 ```bash
 deactivate
@@ -116,9 +101,6 @@ deactivate
 
 **`ModuleNotFoundError: No module named 'torch'`**
 Make sure the virtual environment is active (`source venv/bin/activate`) before running any script.
-
-**`CUDA out of memory`**
-Reduce the image resolution or use `--device cpu`.
 
 **`colour` package not found**
 Install it explicitly: `pip install colour-science`.
