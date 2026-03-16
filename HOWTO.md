@@ -66,33 +66,7 @@ import torch
 print(torch.cuda.is_available())
 ```
 
-## 5. Run the quality assessment
-
-```bash
-python main.py --reference path/to/reference.png --target path/to/target.png
-```
-
-### CLI options
-
-| Flag | Default | Description |
-|---|---|---|
-| `--reference` | required | Path to the reference (pristine) image |
-| `--target` | required | Path to the distorted / generated image |
-| `--output-dir` | `./results` | Directory for diagnostic heatmaps |
-| `--device` | `cpu` | `cpu` or `cuda` |
-| `--scale` | `3` | Number of Gaussian pyramid levels |
-
-### Example
-
-```bash
-python main.py \
-  --reference data/ref/img001.png \
-  --target data/dist/img001_jpeg.png \
-  --output-dir results/ \
-  --device cuda
-```
-
-## 6. Outputs
+## 5. Outputs
 
 The script writes the following to `--output-dir`:
 
@@ -107,7 +81,7 @@ results/
 └── noise_mask.png         # Gaussian noise mask
 ```
 
-## 7. Start the web server
+## 6. Start the web server
 
 Install `uvicorn` if not already included in your requirements:
 
@@ -132,7 +106,7 @@ The API will be available at `http://localhost:8000`.
 
 Remove `--reload` in production.
 
-## 8. Deactivate the virtual environment
+## 7. Deactivate the virtual environment
 
 ```bash
 deactivate
