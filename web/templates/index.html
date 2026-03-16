@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UPIQAL - Image Quality Analyzer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { 50: '#eef2ff', 100: '#e0e7ff', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca', 900: '#312e81' },
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    /* Drag-over highlight */
+    .drop-zone.dragover { @apply ring-4 ring-brand-500/50 bg-brand-50; }
+    /* Score gauge animation */
+    @keyframes gauge-fill { from { width: 0%; } }
+    .gauge-bar { animation: gauge-fill 0.8s ease-out; }
+    /* Fade-in for results */
+    @keyframes fade-up { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+    .fade-up { animation: fade-up 0.5s ease-out both; }
+  </style>
+</head>
+
+<body class="min-h-screen bg-gray-950 text-gray-100 antialiased">
+
+  <!-- ================================================================= -->
+  <!-- HEADER                                                            -->
+  <!-- ================================================================= -->
+  <header class="sticky top-0 z-50 border-b border-gray-800 bg-gray-950/80 backdrop-blur-md">
+    <div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+      <div class="flex items-center gap-3">
+        <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 font-bold text-white text-sm">U</div>
+        <div>
+          <h1 class="text-lg font-semibold tracking-tight">UPIQAL</h1>
+          <p class="text-xs text-gray-400">Unified Probabilistic Image Quality &amp; Artifact Locator</p>
+        </div>
+      </div>
+      <span class="hidden sm:block rounded-full bg-gray-800 px-3 py-1 text-xs text-gray-400">FR-IQA v0.1</span>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-6xl px-6 py-10 space-y-12">
+
+    <!-- ================================================================= -->
+    <!-- UPLOAD SECTION                                                    -->
+    <!-- ================================================================= -->
+    <section>
+      <h2 class="mb-6 text-center text-2xl font-semibold">Upload Images for Comparison</h2>
+
+      <div class="grid gap-6 sm:grid-cols-2">
+        <!-- Reference -->
+        <div>
+          <label class="mb-2 block text-sm font-medium text-gray-300">Reference Image</label>
+          <div id="drop-ref"
+               class="drop-zone relative flex h-56 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-700 bg-gray-900 transition hover:border-brand-500">
+            <input id="input-ref" type="file" accept="image/*" class="absolute inset-0 cursor-pointer opacity-0" />
+            <svg class="mb-2 h-8 w-8 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 16V4m0 0L8 8m4-4l4 4M4 20h16"/></svg>
+            <p class="text-sm text-gray-400">Drag &amp; drop or <span class="text-brand-500 underline">browse</span></p>
+            <img id="preview-ref" class="absolute inset-0 hidden h-full w-full rounded-xl object-contain p-2" alt="Reference preview" />
+          </div>
+        </div>
+
+        <!-- Target -->
+        <div>
+          <label class="mb-2 block text-sm font-medium text-gray-300">Target / Distorted Image</label>
+          <div id="drop-tgt"
+               class="drop-zone relative flex h-56 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-700 bg-gray-900 transition hover:border-brand-500">
+            <input id="input-tgt" type="file" accept="image/*" class="absolute inset-0 cursor-pointer opacity-0" />
+            <svg class="mb-2 h-8 w-8 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 16V4m0 0L8 8m4-4l4 4M4 20h16"/></svg>
+            <p class="text-sm text-gray-400">Drag &amp; drop or <span class="text-brand-500 underline">browse</span></p>
+            <img id="preview-tgt" class="absolute inset-0 hidden h-full w-full rounded-xl object-contain p-2" alt="Target preview" />
+          </div>
+        </div>
+      </div>
+
+      <!-- Run button -->
+      <div class="mt-8 text-center">
+        <button id="btn-run" disabled
+                class="inline-flex items-center gap-2 rounded-lg bg-brand-600 px-8 py-3 font-semibold text-white shadow-lg shadow-brand-600/25 transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-40">
+          <svg id="spinner" class="hidden h-5 w-5 animate-spin" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+          <span id="btn-label">Run UPIQAL Analysis</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- ================================================================= -->
+    <!-- RESULTS SECTION (hidden until analysis completes)                 -->
+    <!-- ================================================================= -->
+    <section id="results" class="hidden space-y-10">
+
+      <!-- Score -->
+      <div class="fade-up rounded-2xl border border-gray-800 bg-gray-900 p-8 text-center">
+        <p class="mb-1 text-sm uppercase tracking-widest text-gray-400">FR-IQA Quality Score</p>
+        <p id="score-value" class="text-6xl font-extrabold tabular-nums tracking-tight">--</p>
+
+        <!-- Gauge bar -->
+        <div class="mx-auto mt-4 h-3 max-w-md overflow-hidden rounded-full bg-gray-800">
+          <div id="score-bar" class="gauge-bar h-full rounded-full" style="width:0%"></div>
+        </div>
+        <p id="score-label" class="mt-2 text-sm text-gray-400"></p>
+      </div>
+
+      <!-- Overlay -->
+      <div class="fade-up rounded-2xl border border-gray-800 bg-gray-900 p-6" style="animation-delay:.1s">
+        <h3 class="mb-4 text-lg font-semibold">Anomaly Overlay</h3>
+        <div class="flex justify-center">
+          <img id="overlay-img" class="max-h-96 rounded-lg" alt="Overlay" />
+        </div>
+      </div>
+
+      <!-- Diagnostic heatmaps -->
+      <div class="fade-up rounded-2xl border border-gray-800 bg-gray-900 p-6" style="animation-delay:.2s">
+        <h3 class="mb-4 text-lg font-semibold">Diagnostic Heatmaps</h3>
+        <div class="grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
+          <div class="text-center">
+            <p class="mb-1 text-xs font-medium text-gray-400">Global Anomaly</p>
+            <img id="hm-anomaly" class="w-full rounded-lg border border-gray-800" alt="Anomaly" />
+          </div>
+          <div class="text-center">
+            <p class="mb-1 text-xs font-medium text-gray-400">Color Degradation</p>
+            <img id="hm-color" class="w-full rounded-lg border border-gray-800" alt="Color" />
+          </div>
+          <div class="text-center">
+            <p class="mb-1 text-xs font-medium text-gray-400">Structural Similarity</p>
+            <img id="hm-structure" class="w-full rounded-lg border border-gray-800" alt="Structure" />
+          </div>
+          <div class="text-center">
+            <p class="mb-1 text-xs font-medium text-gray-400">JPEG Blocking</p>
+            <img id="hm-blocking" class="w-full rounded-lg border border-gray-800" alt="Blocking" />
+          </div>
+          <div class="text-center">
+            <p class="mb-1 text-xs font-medium text-gray-400">Gibbs Ringing</p>
+            <img id="hm-ringing" class="w-full rounded-lg border border-gray-800" alt="Ringing" />
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Error banner -->
+    <div id="error-banner" class="hidden rounded-lg border border-red-800 bg-red-950 p-4 text-sm text-red-300"></div>
+  </main>
+
+  <!-- ================================================================= -->
+  <!-- FOOTER                                                            -->
+  <!-- ================================================================= -->
+  <footer class="border-t border-gray-800 py-6 text-center text-xs text-gray-500">
+    UPIQAL &mdash; Unified Probabilistic Image Quality &amp; Artifact Locator &bull; 2026
+  </footer>
+
+  <!-- ================================================================= -->
+  <!-- SCRIPT                                                            -->
+  <!-- ================================================================= -->
+  <script>
+    // ----- State -----
+    let refFile = null;
+    let tgtFile = null;
+
+    const btnRun     = document.getElementById('btn-run');
+    const btnLabel   = document.getElementById('btn-label');
+    const spinner    = document.getElementById('spinner');
+    const results    = document.getElementById('results');
+    const errorBanner= document.getElementById('error-banner');
+
+    // ----- File handling helpers -----
+    function setupDropZone(dropId, inputId, previewId, onFile) {
+      const zone  = document.getElementById(dropId);
+      const input = document.getElementById(inputId);
+      const prev  = document.getElementById(previewId);
+
+      // Drag events
+      zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+      zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+      zone.addEventListener('drop', e => {
+        e.preventDefault();
+        zone.classList.remove('dragover');
+        if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+      });
+
+      // Click / input
+      input.addEventListener('change', () => { if (input.files.length) handleFile(input.files[0]); });
+
+      function handleFile(file) {
+        if (!file.type.startsWith('image/')) return;
+        onFile(file);
+        // Preview
+        const reader = new FileReader();
+        reader.onload = () => {
+          prev.src = reader.result;
+          prev.classList.remove('hidden');
+        };
+        reader.readAsDataURL(file);
+        updateRunButton();
+      }
+    }
+
+    setupDropZone('drop-ref', 'input-ref', 'preview-ref', f => { refFile = f; });
+    setupDropZone('drop-tgt', 'input-tgt', 'preview-tgt', f => { tgtFile = f; });
+
+    function updateRunButton() {
+      btnRun.disabled = !(refFile && tgtFile);
+    }
+
+    // ----- Run analysis -----
+    btnRun.addEventListener('click', async () => {
+      if (!refFile || !tgtFile) return;
+      errorBanner.classList.add('hidden');
+      results.classList.add('hidden');
+
+      // UI: loading state
+      btnRun.disabled = true;
+      spinner.classList.remove('hidden');
+      btnLabel.textContent = 'Processing...';
+
+      try {
+        const form = new FormData();
+        form.append('reference_image', refFile);
+        form.append('target_image', tgtFile);
+
+        const res = await fetch('/api/compare', { method: 'POST', body: form });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`Server error ${res.status}: ${text}`);
+        }
+        const data = await res.json();
+        renderResults(data);
+      } catch (err) {
+        errorBanner.textContent = err.message;
+        errorBanner.classList.remove('hidden');
+      } finally {
+        spinner.classList.add('hidden');
+        btnLabel.textContent = 'Run UPIQAL Analysis';
+        btnRun.disabled = false;
+      }
+    });
+
+    // ----- Render results -----
+    function renderResults(data) {
+      const score = data.score;
+
+      // Score text
+      document.getElementById('score-value').textContent = score.toFixed(4);
+
+      // Gauge bar
+      const pct = Math.round(score * 100);
+      const bar = document.getElementById('score-bar');
+      bar.style.width = pct + '%';
+
+      // Color gradient: red -> yellow -> green
+      let barColor;
+      if (score < 0.4) barColor = '#ef4444';
+      else if (score < 0.7) barColor = '#eab308';
+      else barColor = '#22c55e';
+      bar.style.backgroundColor = barColor;
+
+      // Label
+      let label;
+      if (score >= 0.9) label = 'Excellent quality';
+      else if (score >= 0.7) label = 'Good quality';
+      else if (score >= 0.5) label = 'Moderate degradation';
+      else if (score >= 0.3) label = 'Poor quality';
+      else label = 'Severe degradation';
+      document.getElementById('score-label').textContent = label;
+
+      // Overlay
+      document.getElementById('overlay-img').src = 'data:image/png;base64,' + data.overlay;
+
+      // Heatmaps
+      for (const key of ['anomaly', 'color', 'structure', 'blocking', 'ringing']) {
+        document.getElementById('hm-' + key).src = 'data:image/png;base64,' + data.heatmaps[key];
+      }
+
+      results.classList.remove('hidden');
+      results.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  </script>
+</body>
+</html>
