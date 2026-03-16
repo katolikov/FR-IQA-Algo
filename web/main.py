@@ -4,7 +4,10 @@ Serves the frontend and exposes a POST /api/compare endpoint that accepts
 two uploaded images, runs the UPIQAL model (mock by default), and returns
 the FR-IQA score plus Base64-encoded diagnostic heatmaps.
 
-Usage:
+Usage (from repo root):
+    uvicorn main:app --app-dir web --reload --port 8000
+
+Usage (from web/ directory):
     cd web
     uvicorn main:app --reload --port 8000
 """
