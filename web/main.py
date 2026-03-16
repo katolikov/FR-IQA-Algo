@@ -142,20 +142,8 @@ async def compare(
     Accepts multipart/form-data with ``reference_image`` and
     ``target_image`` fields.
 
-    Returns JSON:
-    ```json
-    {
-      "score": 0.87,
-      "heatmaps": {
-        "anomaly":   "<base64 PNG>",
-        "color":     "<base64 PNG>",
-        "structure": "<base64 PNG>",
-        "blocking":  "<base64 PNG>",
-        "ringing":   "<base64 PNG>"
-      },
-      "overlay": "<base64 PNG>"
-    }
-    ```
+    Returns JSON with score, heatmaps, overlay, target image, and
+    diagnostic statistics (dominant artifact, severity scores, affected area).
     """
     ref_bytes = await reference_image.read()
     tgt_bytes = await target_image.read()
@@ -199,8 +187,13 @@ async def compare(
     blended_img.save(buf, format="PNG")
     overlay_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
+    # Target image as base64 (for opacity slider overlay in the frontend)
+    target_b64 = tensor_to_base64(tgt_tensor)
+
     return {
         "score": round(score, 4),
         "heatmaps": heatmaps,
         "overlay": overlay_b64,
+        "target": target_b64,
+        "diagnostics": result["diagnostics"],
     }

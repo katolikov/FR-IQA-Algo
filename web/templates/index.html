@@ -10,21 +10,23 @@
       theme: {
         extend: {
           colors: {
-            brand: { 50: '#eef2ff', 100: '#e0e7ff', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca', 900: '#312e81' },
+            brand: { 50: '#eef2ff', 100: '#e0e7ff', 400: '#818cf8', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca', 900: '#312e81' },
           }
         }
       }
     }
   </script>
   <style>
-    /* Drag-over highlight */
     .drop-zone.dragover { @apply ring-4 ring-brand-500/50 bg-brand-50; }
-    /* Score gauge animation */
     @keyframes gauge-fill { from { width: 0%; } }
     .gauge-bar { animation: gauge-fill 0.8s ease-out; }
-    /* Fade-in for results */
     @keyframes fade-up { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
     .fade-up { animation: fade-up 0.5s ease-out both; }
+    @keyframes bar-grow { from { width: 0%; } }
+    .severity-bar { animation: bar-grow 0.6s ease-out both; }
+    .hm-thumb { @apply cursor-pointer rounded-lg border-2 border-transparent transition-all duration-200; }
+    .hm-thumb:hover { @apply border-brand-400 shadow-lg shadow-brand-500/20; }
+    .hm-thumb.active { @apply border-brand-500 ring-2 ring-brand-500/30; }
   </style>
 </head>
 
@@ -34,7 +36,7 @@
   <!-- HEADER                                                            -->
   <!-- ================================================================= -->
   <header class="sticky top-0 z-50 border-b border-gray-800 bg-gray-950/80 backdrop-blur-md">
-    <div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+    <div class="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
       <div class="flex items-center gap-3">
         <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 font-bold text-white text-sm">U</div>
         <div>
@@ -42,11 +44,11 @@
           <p class="text-xs text-gray-400">Unified Probabilistic Image Quality &amp; Artifact Locator</p>
         </div>
       </div>
-      <span class="hidden sm:block rounded-full bg-gray-800 px-3 py-1 text-xs text-gray-400">FR-IQA v0.1</span>
+      <span class="hidden sm:block rounded-full bg-gray-800 px-3 py-1 text-xs text-gray-400">FR-IQA v0.2</span>
     </div>
   </header>
 
-  <main class="mx-auto max-w-6xl px-6 py-10 space-y-12">
+  <main class="mx-auto max-w-7xl px-6 py-10 space-y-12">
 
     <!-- ================================================================= -->
     <!-- UPLOAD SECTION                                                    -->
@@ -91,56 +93,103 @@
     </section>
 
     <!-- ================================================================= -->
-    <!-- RESULTS SECTION (hidden until analysis completes)                 -->
+    <!-- RESULTS SECTION                                                   -->
     <!-- ================================================================= -->
-    <section id="results" class="hidden space-y-10">
+    <section id="results" class="hidden space-y-8">
 
-      <!-- Score -->
-      <div class="fade-up rounded-2xl border border-gray-800 bg-gray-900 p-8 text-center">
-        <p class="mb-1 text-sm uppercase tracking-widest text-gray-400">FR-IQA Quality Score</p>
-        <p id="score-value" class="text-6xl font-extrabold tabular-nums tracking-tight">--</p>
+      <!-- ============================================================= -->
+      <!-- ROW 1: Executive Summary (score + stats + severity bars)       -->
+      <!-- ============================================================= -->
+      <div class="fade-up grid gap-6 lg:grid-cols-3">
 
-        <!-- Gauge bar -->
-        <div class="mx-auto mt-4 h-3 max-w-md overflow-hidden rounded-full bg-gray-800">
-          <div id="score-bar" class="gauge-bar h-full rounded-full" style="width:0%"></div>
+        <!-- Score card -->
+        <div class="flex flex-col items-center justify-center rounded-2xl border border-gray-800 bg-gray-900 p-8">
+          <p class="mb-1 text-sm uppercase tracking-widest text-gray-400">FR-IQA Score</p>
+          <p id="score-value" class="text-6xl font-extrabold tabular-nums tracking-tight">--</p>
+          <div class="mt-4 h-3 w-full max-w-xs overflow-hidden rounded-full bg-gray-800">
+            <div id="score-bar" class="gauge-bar h-full rounded-full" style="width:0%"></div>
+          </div>
+          <p id="score-label" class="mt-2 text-sm text-gray-400"></p>
         </div>
-        <p id="score-label" class="mt-2 text-sm text-gray-400"></p>
-      </div>
 
-      <!-- Overlay -->
-      <div class="fade-up rounded-2xl border border-gray-800 bg-gray-900 p-6" style="animation-delay:.1s">
-        <h3 class="mb-4 text-lg font-semibold">Anomaly Overlay</h3>
-        <div class="flex justify-center">
-          <img id="overlay-img" class="max-h-96 rounded-lg" alt="Overlay" />
-        </div>
-      </div>
-
-      <!-- Diagnostic heatmaps -->
-      <div class="fade-up rounded-2xl border border-gray-800 bg-gray-900 p-6" style="animation-delay:.2s">
-        <h3 class="mb-4 text-lg font-semibold">Diagnostic Heatmaps</h3>
-        <div class="grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
-          <div class="text-center">
-            <p class="mb-1 text-xs font-medium text-gray-400">Global Anomaly</p>
-            <img id="hm-anomaly" class="w-full rounded-lg border border-gray-800" alt="Anomaly" />
+        <!-- Key findings -->
+        <div class="flex flex-col justify-center gap-5 rounded-2xl border border-gray-800 bg-gray-900 p-8">
+          <div>
+            <p class="text-xs uppercase tracking-widest text-gray-500">Dominant Artifact</p>
+            <p id="dominant-artifact" class="mt-1 text-lg font-semibold text-red-400">--</p>
           </div>
-          <div class="text-center">
-            <p class="mb-1 text-xs font-medium text-gray-400">Color Degradation</p>
-            <img id="hm-color" class="w-full rounded-lg border border-gray-800" alt="Color" />
-          </div>
-          <div class="text-center">
-            <p class="mb-1 text-xs font-medium text-gray-400">Structural Similarity</p>
-            <img id="hm-structure" class="w-full rounded-lg border border-gray-800" alt="Structure" />
-          </div>
-          <div class="text-center">
-            <p class="mb-1 text-xs font-medium text-gray-400">JPEG Blocking</p>
-            <img id="hm-blocking" class="w-full rounded-lg border border-gray-800" alt="Blocking" />
-          </div>
-          <div class="text-center">
-            <p class="mb-1 text-xs font-medium text-gray-400">Gibbs Ringing</p>
-            <img id="hm-ringing" class="w-full rounded-lg border border-gray-800" alt="Ringing" />
+          <div>
+            <p class="text-xs uppercase tracking-widest text-gray-500">Affected Area</p>
+            <div class="mt-1 flex items-baseline gap-2">
+              <p id="affected-area" class="text-3xl font-bold tabular-nums">--</p>
+              <span class="text-sm text-gray-400">of pixels flagged</span>
+            </div>
           </div>
         </div>
+
+        <!-- Severity breakdown -->
+        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-8">
+          <p class="mb-4 text-xs uppercase tracking-widest text-gray-500">Artifact Severity</p>
+          <div id="severity-bars" class="space-y-3"></div>
+        </div>
       </div>
+
+      <!-- ============================================================= -->
+      <!-- ROW 2: Interactive Workspace (heatmap gallery + main viewer)   -->
+      <!-- ============================================================= -->
+      <div class="fade-up grid gap-6 lg:grid-cols-[280px_1fr]" style="animation-delay:.15s">
+
+        <!-- Sidebar: clickable heatmap gallery -->
+        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4">
+          <p class="mb-3 text-xs uppercase tracking-widest text-gray-500">Diagnostic Layers</p>
+          <div id="hm-gallery" class="grid grid-cols-2 gap-3 lg:grid-cols-1"></div>
+        </div>
+
+        <!-- Main viewer: large central image with opacity slider -->
+        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-6">
+          <div class="mb-4 flex items-center justify-between">
+            <h3 id="viewer-title" class="text-lg font-semibold">Anomaly Overlay</h3>
+            <div class="flex items-center gap-3">
+              <label for="opacity-slider" class="text-xs text-gray-400">Heatmap Opacity</label>
+              <input id="opacity-slider" type="range" min="0" max="100" value="100"
+                     class="h-1.5 w-32 cursor-pointer appearance-none rounded-full bg-gray-700 accent-brand-500" />
+              <span id="opacity-val" class="w-10 text-right text-xs tabular-nums text-gray-400">100%</span>
+            </div>
+          </div>
+
+          <!-- Layered image container -->
+          <div class="relative mx-auto flex items-center justify-center overflow-hidden rounded-lg bg-gray-950" style="min-height:320px">
+            <img id="viewer-base" class="max-h-[520px] w-auto rounded-lg" alt="Target base" />
+            <img id="viewer-overlay" class="absolute inset-0 m-auto max-h-[520px] w-auto rounded-lg" alt="Heatmap overlay" style="opacity:1" />
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================= -->
+      <!-- ROW 3: Side-by-side originals                                 -->
+      <!-- ============================================================= -->
+      <div class="fade-up grid gap-6 sm:grid-cols-2" style="animation-delay:.25s">
+        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-5">
+          <p class="mb-3 text-xs uppercase tracking-widest text-gray-500">Reference Image</p>
+          <img id="result-ref" class="w-full rounded-lg" alt="Reference" />
+        </div>
+        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-5">
+          <p class="mb-3 text-xs uppercase tracking-widest text-gray-500">Target Image</p>
+          <img id="result-tgt" class="w-full rounded-lg" alt="Target" />
+        </div>
+      </div>
+
+      <!-- ============================================================= -->
+      <!-- Export button                                                  -->
+      <!-- ============================================================= -->
+      <div class="fade-up flex justify-center" style="animation-delay:.3s">
+        <button id="btn-export"
+                class="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-900 px-6 py-3 text-sm font-medium text-gray-200 transition hover:border-brand-500 hover:bg-gray-800 hover:text-white">
+          <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4"/></svg>
+          Download JSON Report
+        </button>
+      </div>
+
     </section>
 
     <!-- Error banner -->
@@ -161,12 +210,14 @@
     // ----- State -----
     let refFile = null;
     let tgtFile = null;
+    let lastData = null;       // store full API response for export
+    let activeHeatmap = null;  // currently selected heatmap key
 
-    const btnRun     = document.getElementById('btn-run');
-    const btnLabel   = document.getElementById('btn-label');
-    const spinner    = document.getElementById('spinner');
-    const results    = document.getElementById('results');
-    const errorBanner= document.getElementById('error-banner');
+    const btnRun      = document.getElementById('btn-run');
+    const btnLabel    = document.getElementById('btn-label');
+    const spinner     = document.getElementById('spinner');
+    const results     = document.getElementById('results');
+    const errorBanner = document.getElementById('error-banner');
 
     // ----- File handling helpers -----
     function setupDropZone(dropId, inputId, previewId, onFile) {
@@ -174,7 +225,6 @@
       const input = document.getElementById(inputId);
       const prev  = document.getElementById(previewId);
 
-      // Drag events
       zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
       zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
       zone.addEventListener('drop', e => {
@@ -183,13 +233,11 @@
         if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
       });
 
-      // Click / input
       input.addEventListener('change', () => { if (input.files.length) handleFile(input.files[0]); });
 
       function handleFile(file) {
         if (!file.type.startsWith('image/')) return;
         onFile(file);
-        // Preview
         const reader = new FileReader();
         reader.onload = () => {
           prev.src = reader.result;
@@ -213,7 +261,6 @@
       errorBanner.classList.add('hidden');
       results.classList.add('hidden');
 
-      // UI: loading state
       btnRun.disabled = true;
       spinner.classList.remove('hidden');
       btnLabel.textContent = 'Processing...';
@@ -226,9 +273,10 @@
         const res = await fetch('/api/compare', { method: 'POST', body: form });
         if (!res.ok) {
           const text = await res.text();
-          throw new Error(`Server error ${res.status}: ${text}`);
+          throw new Error('Server error ' + res.status + ': ' + text);
         }
         const data = await res.json();
+        lastData = data;
         renderResults(data);
       } catch (err) {
         errorBanner.textContent = err.message;
@@ -240,26 +288,44 @@
       }
     });
 
+    // ----- Heatmap gallery config -----
+    const hmMeta = [
+      { key: 'overlay',   label: 'Anomaly Overlay',       isOverlay: true },
+      { key: 'anomaly',   label: 'Global Anomaly' },
+      { key: 'color',     label: 'Color Degradation' },
+      { key: 'structure', label: 'Structural Similarity' },
+      { key: 'blocking',  label: 'JPEG Blocking' },
+      { key: 'ringing',   label: 'Gibbs Ringing' },
+    ];
+
+    // ----- Severity bar colors -----
+    const severityColors = {
+      blocking:    '#ef4444',
+      ringing:     '#f97316',
+      noise:       '#eab308',
+      color_shift: '#a855f7',
+      blur:        '#3b82f6',
+    };
+    const severityLabels = {
+      blocking:    'JPEG Blocking',
+      ringing:     'Gibbs Ringing',
+      noise:       'Noise',
+      color_shift: 'Color Shift',
+      blur:        'Blur',
+    };
+
     // ----- Render results -----
     function renderResults(data) {
       const score = data.score;
+      const diag  = data.diagnostics;
 
-      // Score text
+      // --- Score ---
       document.getElementById('score-value').textContent = score.toFixed(4);
-
-      // Gauge bar
       const pct = Math.round(score * 100);
       const bar = document.getElementById('score-bar');
       bar.style.width = pct + '%';
+      bar.style.backgroundColor = score < 0.4 ? '#ef4444' : score < 0.7 ? '#eab308' : '#22c55e';
 
-      // Color gradient: red -> yellow -> green
-      let barColor;
-      if (score < 0.4) barColor = '#ef4444';
-      else if (score < 0.7) barColor = '#eab308';
-      else barColor = '#22c55e';
-      bar.style.backgroundColor = barColor;
-
-      // Label
       let label;
       if (score >= 0.9) label = 'Excellent quality';
       else if (score >= 0.7) label = 'Good quality';
@@ -268,17 +334,112 @@
       else label = 'Severe degradation';
       document.getElementById('score-label').textContent = label;
 
-      // Overlay
-      document.getElementById('overlay-img').src = 'data:image/png;base64,' + data.overlay;
+      // --- Dominant artifact & affected area ---
+      document.getElementById('dominant-artifact').textContent = diag.dominant_artifact;
+      document.getElementById('affected-area').textContent = diag.affected_area + '%';
 
-      // Heatmaps
-      for (const key of ['anomaly', 'color', 'structure', 'blocking', 'ringing']) {
-        document.getElementById('hm-' + key).src = 'data:image/png;base64,' + data.heatmaps[key];
+      // --- Severity bars ---
+      const severityContainer = document.getElementById('severity-bars');
+      severityContainer.innerHTML = '';
+      for (const [key, val] of Object.entries(diag.severity_scores)) {
+        const color = severityColors[key] || '#6366f1';
+        const labelText = severityLabels[key] || key;
+        const row = document.createElement('div');
+        row.innerHTML =
+          '<div class="flex items-center justify-between text-xs mb-1">' +
+            '<span class="text-gray-300">' + labelText + '</span>' +
+            '<span class="tabular-nums text-gray-400">' + val.toFixed(1) + '%</span>' +
+          '</div>' +
+          '<div class="h-2 w-full overflow-hidden rounded-full bg-gray-800">' +
+            '<div class="severity-bar h-full rounded-full" style="width:' + val + '%;background-color:' + color + ';animation-delay:' + (Object.keys(diag.severity_scores).indexOf(key) * 0.08) + 's"></div>' +
+          '</div>';
+        severityContainer.appendChild(row);
       }
+
+      // --- Reference / Target side-by-side ---
+      document.getElementById('result-ref').src = document.getElementById('preview-ref').src;
+      document.getElementById('result-tgt').src = 'data:image/png;base64,' + data.target;
+
+      // --- Build heatmap gallery ---
+      const gallery = document.getElementById('hm-gallery');
+      gallery.innerHTML = '';
+      hmMeta.forEach((hm, i) => {
+        const src = hm.isOverlay
+          ? 'data:image/png;base64,' + data.overlay
+          : 'data:image/png;base64,' + data.heatmaps[hm.key];
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'hm-thumb p-1' + (i === 0 ? ' active' : '');
+        wrapper.dataset.key = hm.key;
+        wrapper.innerHTML =
+          '<img src="' + src + '" class="w-full rounded" alt="' + hm.label + '" />' +
+          '<p class="mt-1 text-center text-[10px] font-medium text-gray-400">' + hm.label + '</p>';
+
+        wrapper.addEventListener('click', () => selectHeatmap(hm.key, hm.label, wrapper));
+        gallery.appendChild(wrapper);
+      });
+
+      // --- Initialize viewer with overlay ---
+      selectHeatmap('overlay', 'Anomaly Overlay', gallery.querySelector('.hm-thumb'));
+
+      // --- Reset opacity slider ---
+      const slider = document.getElementById('opacity-slider');
+      slider.value = 100;
+      document.getElementById('opacity-val').textContent = '100%';
 
       results.classList.remove('hidden');
       results.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
+
+    // ----- Select a heatmap for the main viewer -----
+    function selectHeatmap(key, label, thumbEl) {
+      if (!lastData) return;
+
+      // Update active thumb
+      document.querySelectorAll('.hm-thumb').forEach(el => el.classList.remove('active'));
+      if (thumbEl) thumbEl.classList.add('active');
+      activeHeatmap = key;
+
+      // Update title
+      document.getElementById('viewer-title').textContent = label;
+
+      // Set base image (always the target)
+      document.getElementById('viewer-base').src = 'data:image/png;base64,' + lastData.target;
+
+      // Set overlay image
+      const overlaySrc = key === 'overlay'
+        ? 'data:image/png;base64,' + lastData.overlay
+        : 'data:image/png;base64,' + lastData.heatmaps[key];
+      document.getElementById('viewer-overlay').src = overlaySrc;
+
+      // Apply current slider value
+      const slider = document.getElementById('opacity-slider');
+      document.getElementById('viewer-overlay').style.opacity = slider.value / 100;
+    }
+
+    // ----- Opacity slider -----
+    document.getElementById('opacity-slider').addEventListener('input', function() {
+      document.getElementById('viewer-overlay').style.opacity = this.value / 100;
+      document.getElementById('opacity-val').textContent = this.value + '%';
+    });
+
+    // ----- Export JSON report -----
+    document.getElementById('btn-export').addEventListener('click', () => {
+      if (!lastData) return;
+      const report = {
+        score: lastData.score,
+        diagnostics: lastData.diagnostics,
+        timestamp: new Date().toISOString(),
+        tool: 'UPIQAL FR-IQA v0.2',
+      };
+      const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'upiqal-report-' + Date.now() + '.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    });
   </script>
 </body>
 </html>
