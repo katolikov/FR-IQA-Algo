@@ -51,22 +51,7 @@ pip install -r requirements.txt
 | `POT` | Sinkhorn–Knopp optimal transport (EMD approximation) |
 | `colour-science` | sRGB → Oklab color space conversion |
 
-## 4. Outputs
-
-The script writes the following to `--output-dir`:
-
-```
-results/
-├── score.txt              # Scalar FR-IQA score [0, 1]  (higher = better quality)
-├── anomaly_map.png        # Global anomaly heatmap (Mahalanobis distance)
-├── color_degradation.png  # Chromatic transport degradation map
-├── blocking_mask.png      # JPEG blocking artifact mask
-├── ringing_mask.png       # Gibbs ringing mask
-├── blur_mask.png          # Blur / edge-spread mask
-└── noise_mask.png         # Gaussian noise mask
-```
-
-## 5. Start the web server
+## 4. Start the web server
 
 Install `uvicorn` if not already included in your requirements:
 
@@ -91,7 +76,7 @@ The API will be available at `http://localhost:8000`.
 
 Remove `--reload` in production.
 
-## 6. Deactivate the virtual environment
+## 5. Deactivate the virtual environment
 
 ```bash
 deactivate
