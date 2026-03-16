@@ -107,7 +107,42 @@ class MockUPIQAL(nn.Module):
             [anomaly, color_map, ssim_approx, blocking, ringing], dim=1
         )
 
+        # --- Diagnostic statistics ---
+        blocking_severity = float(blocking.mean().item()) * 100
+        ringing_severity = float(ringing.mean().item()) * 100
+        noise_severity = float(anomaly.mean().item()) * 100
+        color_severity = float(color_map.mean().item()) * 100
+        blur_severity = float((1.0 - ssim_approx).mean().item()) * 100
+
+        severity_scores = {
+            "blocking": round(min(blocking_severity * 5, 100.0), 1),
+            "ringing": round(min(ringing_severity * 5, 100.0), 1),
+            "noise": round(min(noise_severity * 3, 100.0), 1),
+            "color_shift": round(min(color_severity * 3, 100.0), 1),
+            "blur": round(min(blur_severity * 2, 100.0), 1),
+        }
+
+        artifact_labels = {
+            "blocking": "Severe JPEG Blocking",
+            "ringing": "Gibbs Ringing",
+            "noise": "Noise / Granularity",
+            "color_shift": "Color Shift",
+            "blur": "Blur / Loss of Detail",
+        }
+        dominant_key = max(severity_scores, key=severity_scores.get)
+        dominant_artifact = artifact_labels[dominant_key]
+
+        affected_mask = (anomaly > 0.15).float()
+        affected_area = round(float(affected_mask.mean().item()) * 100, 1)
+
+        diagnostics = {
+            "dominant_artifact": dominant_artifact,
+            "severity_scores": severity_scores,
+            "affected_area": affected_area,
+        }
+
         return {
             "score": score,
             "diagnostic_tensor": diagnostic,
+            "diagnostics": diagnostics,
         }
