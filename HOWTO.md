@@ -107,7 +107,32 @@ results/
 └── noise_mask.png         # Gaussian noise mask
 ```
 
-## 7. Deactivate the virtual environment
+## 7. Start the web server
+
+Install `uvicorn` if not already included in your requirements:
+
+```bash
+pip install uvicorn
+```
+
+Start the server:
+
+```bash
+uvicorn main:app --app-dir web --reload --port 8000
+```
+
+The API will be available at `http://localhost:8000`.
+
+| Flag | Description |
+|---|---|
+| `main:app` | Module `web/main.py`, FastAPI instance named `app` |
+| `--app-dir web` | Sets `web/` as the working directory for the app |
+| `--reload` | Auto-reloads on code changes (development only) |
+| `--port 8000` | Port to listen on |
+
+Remove `--reload` in production.
+
+## 8. Deactivate the virtual environment
 
 ```bash
 deactivate
