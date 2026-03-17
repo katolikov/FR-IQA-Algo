@@ -415,8 +415,9 @@
       fitToView() {
         if (!this.baseImg) return;
 
-        const cw = this.canvas.width;
-        const ch = this.canvas.height;
+        // Use CSS-pixel dimensions (not DPR-scaled canvas buffer size)
+        const cw = this._cssW || this.container.getBoundingClientRect().width;
+        const ch = this._cssH || this.container.getBoundingClientRect().height;
         const iw = this.baseImg.naturalWidth;
         const ih = this.baseImg.naturalHeight;
 

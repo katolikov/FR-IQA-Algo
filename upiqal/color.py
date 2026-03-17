@@ -210,7 +210,7 @@ class ChromaticTransportEvaluator(nn.Module):
 
         # Unfold into patches: (B, 3, Ph, ps, Pw, ps)
         patches = oklab.unfold(2, ps, ps).unfold(3, ps, ps)
-        patches = patches.permute(0, 2, 4, 1, 3, 5)  # (B, Ph, Pw, 3, ps, ps)
+        patches = patches.permute(0, 2, 3, 1, 4, 5)  # (B, Ph, Pw, 3, ps, ps)
         patches = patches.reshape(B * Ph * Pw, 3, ps * ps)  # (P, 3, N_pix)
         patches = patches.permute(0, 2, 1)  # (P, N_pix, 3)
 
