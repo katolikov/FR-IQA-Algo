@@ -25,7 +25,7 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 import torch
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import HTMLResponse
 from PIL import Image
 
@@ -76,14 +76,83 @@ def get_model() -> UPIQAL:
 # ---------------------------------------------------------------------------
 
 
-def read_image_as_tensor(data: bytes, max_side: int = 512) -> torch.Tensor:
+def _nv21_to_rgb(data: bytes, width: int, height: int) -> np.ndarray:
+    """Convert NV21 (YUV420SP) raw bytes to ``(H, W, 3)`` uint8 RGB."""
+    y_size = width * height
+    uv_size = y_size // 2
+    if len(data) < y_size + uv_size:
+        raise ValueError(
+            f"NV21 data too short: expected {y_size + uv_size} bytes "
+            f"for {width}x{height}, got {len(data)}"
+        )
+    y = np.frombuffer(data, np.uint8, count=y_size).reshape(height, width).astype(np.float32)
+    vu = np.frombuffer(data, np.uint8, offset=y_size, count=uv_size).reshape(height // 2, width // 2, 2)
+    v = np.repeat(np.repeat(vu[:, :, 0].astype(np.float32), 2, 0), 2, 1)[:height, :width]
+    u = np.repeat(np.repeat(vu[:, :, 1].astype(np.float32), 2, 0), 2, 1)[:height, :width]
+    r = np.clip(y + 1.370705 * (v - 128), 0, 255)
+    g = np.clip(y - 0.337633 * (u - 128) - 0.698001 * (v - 128), 0, 255)
+    b = np.clip(y + 1.732446 * (u - 128), 0, 255)
+    return np.stack([r, g, b], axis=-1).astype(np.uint8)
+
+
+def _decode_raw_bytes(
+    data: bytes,
+    width: int,
+    height: int,
+    pixel_format: str,
+    filename: str = "",
+) -> np.ndarray:
+    """Decode raw/binary upload bytes to ``(H, W, 3)`` uint8 RGB.
+
+    Handles ``.npy`` (by extension in *filename*), NV21, GRAY8, RGB888.
+    """
+    ext = Path(filename).suffix.lower() if filename else ""
+
+    if ext == ".npy":
+        arr = np.load(io.BytesIO(data))
+        if arr.ndim == 2:
+            arr = np.stack([arr, arr, arr], axis=-1)
+        if arr.dtype != np.uint8:
+            arr = (arr * 255).clip(0, 255).astype(np.uint8) if arr.max() <= 1.0 else arr.clip(0, 255).astype(np.uint8)
+        return arr
+
+    fmt = pixel_format.upper()
+    if fmt == "NV21" or ext == ".nv21":
+        return _nv21_to_rgb(data, width, height)
+    elif fmt == "GRAY8":
+        gray = np.frombuffer(data, np.uint8, count=width * height).reshape(height, width)
+        return np.stack([gray, gray, gray], axis=-1)
+    elif fmt == "RGB888":
+        return np.frombuffer(data, np.uint8, count=width * height * 3).reshape(height, width, 3)
+    else:
+        raise ValueError(f"Unsupported pixel_format: {pixel_format!r}")
+
+
+_RAW_EXTENSIONS = {".raw", ".bin", ".nv21", ".npy"}
+
+
+def read_image_as_tensor(
+    data: bytes,
+    max_side: int = 512,
+    width: int = 0,
+    height: int = 0,
+    pixel_format: str = "RGB888",
+    filename: str = "",
+) -> torch.Tensor:
     """Decode uploaded bytes to a ``(1, 3, H, W)`` float tensor in ``[0, 1]``.
 
-    Images are resized so that the longer side is at most *max_side* pixels
-    to keep inference fast.  The returned tensor is contiguous and on CPU;
-    it will be moved to the model device in the compare endpoint.
+    For standard image formats (PNG, JPEG) the raw-format parameters are
+    ignored.  For raw/binary uploads the *width*, *height*, and
+    *pixel_format* are used to interpret the byte stream.
     """
-    img = Image.open(io.BytesIO(data)).convert("RGB")
+    ext = Path(filename).suffix.lower() if filename else ""
+    is_raw = ext in _RAW_EXTENSIONS
+
+    if is_raw:
+        rgb = _decode_raw_bytes(data, width, height, pixel_format, filename)
+        img = Image.fromarray(rgb)
+    else:
+        img = Image.open(io.BytesIO(data)).convert("RGB")
 
     # Resize keeping aspect ratio
     w, h = img.size
@@ -234,11 +303,16 @@ async def index():
 async def compare(
     reference_image: UploadFile = File(...),
     target_image: UploadFile = File(...),
+    width: int = Form(0),
+    height: int = Form(0),
+    pixel_format: str = Form("RGB888"),
+    output_format: str = Form("png"),
 ):
     """Compare two images using the real UPIQAL model.
 
     Accepts multipart/form-data with ``reference_image`` and
-    ``target_image`` fields.
+    ``target_image`` fields, plus optional ``width``, ``height``,
+    ``pixel_format``, and ``output_format`` for raw/binary inputs.
 
     Returns JSON with score, heatmaps, overlay, target image, and
     diagnostic statistics (dominant artifact, severity scores, affected area).
@@ -246,8 +320,15 @@ async def compare(
     ref_bytes = await reference_image.read()
     tgt_bytes = await target_image.read()
 
-    ref_tensor = read_image_as_tensor(ref_bytes)
-    tgt_tensor = read_image_as_tensor(tgt_bytes)
+    raw_kw = dict(
+        width=width,
+        height=height,
+        pixel_format=pixel_format,
+        filename=reference_image.filename or "",
+    )
+    ref_tensor = read_image_as_tensor(ref_bytes, **raw_kw)
+    raw_kw["filename"] = target_image.filename or ""
+    tgt_tensor = read_image_as_tensor(tgt_bytes, **raw_kw)
 
     # Ensure same spatial dimensions (resize target to match reference)
     _, _, rh, rw = ref_tensor.shape
@@ -297,10 +378,86 @@ async def compare(
     # Target image as base64 (for opacity slider overlay in the frontend)
     target_b64 = tensor_to_base64(tgt_tensor)
 
+    # Store diagnostic tensor for binary download endpoint
+    _store_last_diagnostic(diag)
+
     return {
         "score": round(score, 4),
         "heatmaps": heatmaps,
         "overlay": overlay_b64,
         "target": target_b64,
         "diagnostics": diagnostics,
+        "output_format": output_format,
     }
+
+
+# ---------------------------------------------------------------------------
+# Binary download support
+# ---------------------------------------------------------------------------
+
+_last_diagnostic: Optional[torch.Tensor] = None
+
+
+def _store_last_diagnostic(diag: torch.Tensor) -> None:
+    """Cache the most recent diagnostic tensor for download requests."""
+    global _last_diagnostic
+    _last_diagnostic = diag.cpu()
+
+
+_CHANNEL_NAMES = ["anomaly", "color", "structure", "blocking", "ringing"]
+
+
+@app.get("/api/download/{mask_name}")
+async def download_mask(
+    mask_name: str,
+    fmt: str = "npy",
+):
+    """Download a diagnostic channel in a non-PNG binary format.
+
+    Supported *fmt* values: ``npy``, ``raw``, ``bin``, ``nv21``.
+    """
+    from fastapi.responses import Response
+
+    if _last_diagnostic is None:
+        return Response(content="No analysis results available", status_code=404)
+
+    if mask_name not in _CHANNEL_NAMES:
+        return Response(content=f"Unknown mask: {mask_name}", status_code=400)
+
+    ch_idx = _CHANNEL_NAMES.index(mask_name)
+    arr = _last_diagnostic[0, ch_idx].numpy()
+
+    # Normalize to [0, 1]
+    lo, hi = arr.min(), arr.max()
+    if hi - lo > 1e-8:
+        arr = (arr - lo) / (hi - lo)
+    else:
+        arr = np.zeros_like(arr)
+
+    fmt = fmt.lower()
+    if fmt == "npy":
+        buf = io.BytesIO()
+        np.save(buf, arr.astype(np.float32))
+        return Response(
+            content=buf.getvalue(),
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="upiqal-{mask_name}.npy"'},
+        )
+    elif fmt in ("raw", "bin"):
+        return Response(
+            content=arr.astype(np.float32).tobytes(),
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="upiqal-{mask_name}.{fmt}"'},
+        )
+    elif fmt == "nv21":
+        h, w = arr.shape
+        h2, w2 = h - h % 2, w - w % 2
+        y_plane = (arr[:h2, :w2] * 255).clip(0, 255).astype(np.uint8)
+        uv_plane = np.full((h2 // 2, w2), 128, dtype=np.uint8)
+        return Response(
+            content=y_plane.tobytes() + uv_plane.tobytes(),
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="upiqal-{mask_name}.nv21"'},
+        )
+    else:
+        return Response(content=f"Unsupported format: {fmt}", status_code=400)

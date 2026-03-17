@@ -16,6 +16,8 @@ Usage:
     python upiqal_cli.py --reference ref.png --target tgt.png
     python upiqal_cli.py --reference ref.png --target tgt.png --name experiment1
     python upiqal_cli.py --reference ref.png --target tgt.png --max-side 256
+    python upiqal_cli.py --reference ref.raw --target tgt.raw --width 640 --height 480 --pixel_format RGB888
+    python upiqal_cli.py --reference ref.nv21 --target tgt.nv21 --width 640 --height 480 --pixel_format NV21 --output_format npy
 
 Dependencies:
     torch>=2.0, torchvision>=0.15, numpy>=1.24, pillow>=10.0
@@ -51,29 +53,127 @@ from upiqal import __version__ as UPIQAL_VERSION
 
 
 # ======================================================================
+# Raw / binary format constants
+# ======================================================================
+
+_RAW_EXTENSIONS = {".raw", ".bin", ".nv21", ".npy"}
+
+
+# ======================================================================
 # Image I/O helpers
 # ======================================================================
 
 
-def load_image_as_tensor(path: str, max_side: int = 512) -> torch.Tensor:
+def _nv21_to_rgb(data: bytes, width: int, height: int) -> np.ndarray:
+    """Convert NV21 (YUV420SP) raw bytes to an ``(H, W, 3)`` uint8 RGB array.
+
+    NV21 layout: ``H*W`` bytes of Y, then ``H/2 * W`` bytes of interleaved VU.
+    """
+    y_size = width * height
+    uv_size = y_size // 2
+    expected = y_size + uv_size
+    if len(data) < expected:
+        raise ValueError(
+            f"NV21 data too short: expected {expected} bytes for "
+            f"{width}x{height}, got {len(data)}"
+        )
+
+    y_plane = np.frombuffer(data, dtype=np.uint8, count=y_size).reshape(height, width).astype(np.float32)
+    vu = np.frombuffer(data, dtype=np.uint8, offset=y_size, count=uv_size).reshape(height // 2, width // 2, 2)
+    v_plane = vu[:, :, 0].astype(np.float32)
+    u_plane = vu[:, :, 1].astype(np.float32)
+
+    # Upsample U/V to full resolution
+    u_full = np.repeat(np.repeat(u_plane, 2, axis=0), 2, axis=1)[:height, :width]
+    v_full = np.repeat(np.repeat(v_plane, 2, axis=0), 2, axis=1)[:height, :width]
+
+    # YUV → RGB (BT.601)
+    r = np.clip(y_plane + 1.370705 * (v_full - 128.0), 0, 255)
+    g = np.clip(y_plane - 0.337633 * (u_full - 128.0) - 0.698001 * (v_full - 128.0), 0, 255)
+    b = np.clip(y_plane + 1.732446 * (u_full - 128.0), 0, 255)
+
+    return np.stack([r, g, b], axis=-1).astype(np.uint8)
+
+
+def load_raw_image(
+    path: str, width: int, height: int, pixel_format: str,
+) -> np.ndarray:
+    """Load a raw/binary file and return an ``(H, W, 3)`` uint8 RGB array.
+
+    Supported pixel formats: ``NV21``, ``GRAY8``, ``RGB888``.
+    Also handles ``.npy`` files (auto-detected from extension).
+    """
+    ext = Path(path).suffix.lower()
+
+    if ext == ".npy":
+        arr = np.load(path)
+        if arr.ndim == 2:
+            # Grayscale → RGB
+            arr = np.stack([arr, arr, arr], axis=-1)
+        if arr.dtype != np.uint8:
+            if arr.max() <= 1.0:
+                arr = (arr * 255).clip(0, 255).astype(np.uint8)
+            else:
+                arr = arr.clip(0, 255).astype(np.uint8)
+        return arr
+
+    raw_bytes = Path(path).read_bytes()
+    fmt = pixel_format.upper()
+
+    if fmt == "NV21" or ext == ".nv21":
+        return _nv21_to_rgb(raw_bytes, width, height)
+    elif fmt == "GRAY8":
+        expected = width * height
+        if len(raw_bytes) < expected:
+            raise ValueError(
+                f"GRAY8 data too short: expected {expected} bytes, got {len(raw_bytes)}"
+            )
+        gray = np.frombuffer(raw_bytes, dtype=np.uint8, count=expected).reshape(height, width)
+        return np.stack([gray, gray, gray], axis=-1)
+    elif fmt == "RGB888":
+        expected = width * height * 3
+        if len(raw_bytes) < expected:
+            raise ValueError(
+                f"RGB888 data too short: expected {expected} bytes, got {len(raw_bytes)}"
+            )
+        return np.frombuffer(raw_bytes, dtype=np.uint8, count=expected).reshape(height, width, 3)
+    else:
+        raise ValueError(f"Unsupported pixel_format: {pixel_format!r}")
+
+
+def _is_raw_file(path: str) -> bool:
+    """Return True if the file extension indicates a raw/binary format."""
+    return Path(path).suffix.lower() in _RAW_EXTENSIONS
+
+
+def load_image_as_tensor(
+    path: str,
+    max_side: int = 512,
+    width: int = 0,
+    height: int = 0,
+    pixel_format: str = "RGB888",
+) -> torch.Tensor:
     """Load an image file and return a ``(1, 3, H, W)`` float tensor in [0, 1].
+
+    For standard image files (PNG, JPEG, etc.) the *width*/*height*/*pixel_format*
+    parameters are ignored.  For raw/binary files (``.raw``, ``.bin``, ``.nv21``,
+    ``.npy``) the dimensions and pixel format are required.
 
     The longer side is resized to at most *max_side* pixels (aspect ratio
     preserved) using Lanczos resampling so that inference stays fast.
-
-    Parameters
-    ----------
-    path : str
-        Filesystem path to the image.
-    max_side : int
-        Maximum pixel dimension for the longer side (default 512).
-
-    Returns
-    -------
-    torch.Tensor
-        Image tensor ``(1, 3, H, W)`` with values in ``[0, 1]``.
     """
-    img = Image.open(path).convert("RGB")
+    if _is_raw_file(path):
+        if not width or not height:
+            ext = Path(path).suffix.lower()
+            if ext != ".npy":
+                raise ValueError(
+                    f"--width and --height are required for raw file: {path}"
+                )
+        rgb = load_raw_image(path, width, height, pixel_format)
+        img = Image.fromarray(rgb)
+    else:
+        img = Image.open(path).convert("RGB")
+
     w, h = img.size
     if max(w, h) > max_side:
         scale = max_side / max(w, h)
@@ -108,24 +208,20 @@ def apply_jet_colormap(gray: np.ndarray) -> np.ndarray:
     return (rgb * 255).astype(np.uint8)
 
 
-def save_channel_as_png(
+def save_channel(
     tensor: torch.Tensor,
     channel: int,
     filepath: str,
     use_colormap: bool = True,
+    output_format: str = "png",
 ) -> None:
-    """Extract one channel from a diagnostic tensor and save as PNG.
+    """Extract one channel from a diagnostic tensor and save in the chosen format.
 
-    Parameters
-    ----------
-    tensor : torch.Tensor
-        Diagnostic tensor ``(1, C, H, W)``.
-    channel : int
-        Channel index to extract.
-    filepath : str
-        Output PNG path.
-    use_colormap : bool
-        If True, apply JET colormap; otherwise save as grayscale.
+    Supported *output_format* values:
+    - ``png``  — Colormapped RGB PNG image.
+    - ``npy``  — Raw float32 NumPy array (normalized [0, 1]).
+    - ``raw`` / ``bin`` — Flat float32 binary dump.
+    - ``nv21`` — NV21 (YUV420SP) binary from the grayscale channel.
     """
     arr = tensor[0, channel].cpu().numpy()
 
@@ -136,13 +232,47 @@ def save_channel_as_png(
     else:
         arr = np.zeros_like(arr)
 
-    if use_colormap:
-        rgb = apply_jet_colormap(arr)
-    else:
-        # Grayscale → 3-channel for consistent PNG output
-        rgb = (np.stack([arr] * 3, axis=-1) * 255).astype(np.uint8)
+    fmt = output_format.lower()
 
-    Image.fromarray(rgb).save(filepath, format="PNG")
+    if fmt == "png":
+        if use_colormap:
+            rgb = apply_jet_colormap(arr)
+        else:
+            rgb = (np.stack([arr] * 3, axis=-1) * 255).astype(np.uint8)
+        Image.fromarray(rgb).save(filepath, format="PNG")
+
+    elif fmt == "npy":
+        np.save(filepath, arr.astype(np.float32))
+
+    elif fmt in ("raw", "bin"):
+        arr.astype(np.float32).tofile(filepath)
+
+    elif fmt == "nv21":
+        _save_as_nv21(arr, filepath)
+
+    else:
+        raise ValueError(f"Unsupported output_format: {output_format!r}")
+
+
+def _save_as_nv21(gray_01: np.ndarray, filepath: str) -> None:
+    """Convert a [0,1] grayscale array to NV21 bytes and write to disk.
+
+    The grayscale value is written as the Y plane; U and V are set to 128
+    (neutral chroma) so the result is a valid monochrome NV21 frame.
+    """
+    h, w = gray_01.shape
+    # Ensure even dimensions for NV21
+    h2 = h if h % 2 == 0 else h - 1
+    w2 = w if w % 2 == 0 else w - 1
+    y_plane = (gray_01[:h2, :w2] * 255).clip(0, 255).astype(np.uint8)
+    uv_plane = np.full((h2 // 2, w2), 128, dtype=np.uint8)  # VU interleaved, neutral
+    with open(filepath, "wb") as f:
+        f.write(y_plane.tobytes())
+        f.write(uv_plane.tobytes())
+
+
+# Backwards-compatible alias
+save_channel_as_png = save_channel
 
 
 # ======================================================================
@@ -315,8 +445,13 @@ def run_pipeline(args: argparse.Namespace) -> None:
     print(f"Target    : {args.target}")
 
     # ── Load images ─────────────────────────────────────────────────
-    ref_tensor = load_image_as_tensor(args.reference, max_side=args.max_side)
-    tgt_tensor = load_image_as_tensor(args.target, max_side=args.max_side)
+    raw_kw = dict(
+        width=getattr(args, "width", 0) or 0,
+        height=getattr(args, "height", 0) or 0,
+        pixel_format=getattr(args, "pixel_format", "RGB888") or "RGB888",
+    )
+    ref_tensor = load_image_as_tensor(args.reference, max_side=args.max_side, **raw_kw)
+    tgt_tensor = load_image_as_tensor(args.target, max_side=args.max_side, **raw_kw)
 
     # Ensure matching spatial dimensions (resize target to reference)
     _, _, rh, rw = ref_tensor.shape
@@ -456,17 +591,25 @@ def run_pipeline(args: argparse.Namespace) -> None:
     print(f"Affected Area: {diagnostics['affected_area']}%")
     print(sep)
 
-    # ── Save output PNGs ────────────────────────────────────────────
-    # Channel 0: Global Anomaly Map (continuous → JET colormap)
-    save_channel_as_png(diagnostic, 0, str(out_dir / "global_anomaly_map.png"), use_colormap=True)
-    # Channel 1: Color Degradation Map (continuous → JET colormap)
-    save_channel_as_png(diagnostic, 1, str(out_dir / "color_degradation_map.png"), use_colormap=True)
-    # Channel 2: Structural Similarity Map (continuous → JET colormap)
-    save_channel_as_png(diagnostic, 2, str(out_dir / "structural_similarity_map.png"), use_colormap=True)
-    # Channel 3: JPEG Blocking Mask (binary → grayscale)
-    save_channel_as_png(diagnostic, 3, str(out_dir / "jpeg_blocking_mask.png"), use_colormap=False)
-    # Channel 4: Gibbs Ringing Mask (binary → grayscale)
-    save_channel_as_png(diagnostic, 4, str(out_dir / "gibbs_ringing_mask.png"), use_colormap=False)
+    # ── Save output maps ─────────────────────────────────────────────
+    out_fmt = getattr(args, "output_format", "png") or "png"
+    ext = out_fmt if out_fmt not in ("raw", "bin") else out_fmt
+    ext_dot = f".{ext}"
+
+    channel_info = [
+        (0, "global_anomaly_map",         True),
+        (1, "color_degradation_map",      True),
+        (2, "structural_similarity_map",  True),
+        (3, "jpeg_blocking_mask",         False),
+        (4, "gibbs_ringing_mask",         False),
+    ]
+    for ch_idx, name, use_cmap in channel_info:
+        save_channel(
+            diagnostic, ch_idx,
+            str(out_dir / f"{name}{ext_dot}"),
+            use_colormap=use_cmap,
+            output_format=out_fmt,
+        )
 
     # ── Save JSON report ────────────────────────────────────────────
     report = {
@@ -544,6 +687,34 @@ def parse_args() -> argparse.Namespace:
         ),
     )
 
+    # --- Raw / binary input format options ---
+    parser.add_argument(
+        "--width",
+        type=int,
+        default=0,
+        help="Image width in pixels (required for .raw/.bin/.nv21 inputs).",
+    )
+    parser.add_argument(
+        "--height",
+        type=int,
+        default=0,
+        help="Image height in pixels (required for .raw/.bin/.nv21 inputs).",
+    )
+    parser.add_argument(
+        "--pixel_format",
+        default="RGB888",
+        choices=["NV21", "GRAY8", "RGB888"],
+        help="Pixel format of raw inputs (default: RGB888).",
+    )
+
+    # --- Output format ---
+    parser.add_argument(
+        "--output_format",
+        default="png",
+        choices=["png", "npy", "raw", "bin", "nv21"],
+        help="Output format for diagnostic heatmaps (default: png).",
+    )
+
     return parser.parse_args()
 
 
@@ -558,6 +729,17 @@ def main() -> None:
     if not os.path.isfile(args.target):
         print(f"Error: target image not found: {args.target}", file=sys.stderr)
         sys.exit(1)
+
+    # Validate raw format requirements
+    for label, fpath in [("reference", args.reference), ("target", args.target)]:
+        if _is_raw_file(fpath) and Path(fpath).suffix.lower() != ".npy":
+            if not args.width or not args.height:
+                print(
+                    f"Error: --width and --height are required for {label} "
+                    f"raw file: {fpath}",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
 
     run_pipeline(args)
 
