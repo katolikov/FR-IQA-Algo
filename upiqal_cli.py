@@ -611,6 +611,36 @@ def run_pipeline(args: argparse.Namespace) -> None:
             output_format=out_fmt,
         )
 
+    # ── Generate anomaly overlay at original resolution ─────────────
+    alpha = 0.6  # heatmap opacity; 0.0 = target only, 1.0 = heatmap only
+
+    # Load target image at its full native resolution
+    if _is_raw_file(args.target):
+        _orig_rgb = load_raw_image(
+            args.target,
+            raw_kw["width"], raw_kw["height"], raw_kw["pixel_format"],
+        )
+        orig_img = Image.fromarray(_orig_rgb)
+    else:
+        orig_img = Image.open(args.target).convert("RGB")
+    orig_w, orig_h = orig_img.size
+
+    # Get the single-channel anomaly map and upsample to original resolution
+    anom_np = anomaly_norm[0, 0].cpu().numpy()  # (H, W) in [0, 1]
+    anom_full = np.array(
+        Image.fromarray((anom_np * 255).astype(np.uint8)).resize(
+            (orig_w, orig_h), Image.LANCZOS,
+        ),
+        dtype=np.float32,
+    ) / 255.0  # back to [0, 1]
+
+    # Apply JET colormap and alpha-blend onto the original target
+    heatmap_rgb = apply_jet_colormap(anom_full)  # (orig_h, orig_w, 3) uint8
+    target_rgb = np.array(orig_img, dtype=np.float32)
+    blended = (1.0 - alpha) * target_rgb + alpha * heatmap_rgb.astype(np.float32)
+    blended = np.clip(blended, 0, 255).astype(np.uint8)
+    Image.fromarray(blended).save(str(out_dir / "anomaly_overlay.png"), format="PNG")
+
     # ── Save JSON report ────────────────────────────────────────────
     report = {
         "tool": f"UPIQAL FR-IQA v{UPIQAL_VERSION}",
