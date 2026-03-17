@@ -1,8 +1,11 @@
 """FastAPI server for the UPIQAL web application.
 
 Serves the frontend and exposes a POST /api/compare endpoint that accepts
-two uploaded images, runs the UPIQAL model (mock by default), and returns
-the FR-IQA score plus Base64-encoded diagnostic heatmaps.
+two uploaded images, runs the real UPIQAL model (with pretrained VGG16),
+and returns the FR-IQA score plus Base64-encoded diagnostic heatmaps.
+
+The heavy VGG16 model is loaded exactly once at startup (moved to CUDA if
+available) and reused for every request.
 
 Usage (from repo root):
     uvicorn main:app --app-dir web --reload --port 8000
@@ -16,17 +19,22 @@ from __future__ import annotations
 
 import base64
 import io
+import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 import numpy as np
 import torch
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
-from mock_upiqal import MockUPIQAL
+# Ensure the upiqal package (at repo root) is importable when running from web/
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from upiqal import UPIQAL  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Application setup
@@ -36,15 +44,30 @@ app = FastAPI(title="UPIQAL - Image Quality Analyzer")
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
-# Model singleton (loaded once at startup)
-_model: Optional[MockUPIQAL] = None
+# Select the best available device (CUDA > MPS > CPU)
+_device: torch.device = torch.device(
+    "cuda" if torch.cuda.is_available()
+    else "mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+    else "cpu"
+)
+
+# Model singleton (loaded once at startup, never reloaded per-request)
+_model: Optional[UPIQAL] = None
 
 
-def get_model() -> MockUPIQAL:
+def get_model() -> UPIQAL:
+    """Return the global UPIQAL model, initialising it on first call.
+
+    The pretrained VGG16 weights are downloaded on the very first run
+    (~528 MB) and cached by torchvision.  The full model is moved to
+    the best available device and set to eval mode.
+    """
     global _model
     if _model is None:
-        _model = MockUPIQAL()
+        _model = UPIQAL(pretrained_vgg=True)
+        _model.to(_device)
         _model.eval()
+        print(f"UPIQAL model loaded on {_device}")
     return _model
 
 
@@ -52,11 +75,13 @@ def get_model() -> MockUPIQAL:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def read_image_as_tensor(data: bytes, max_side: int = 512) -> torch.Tensor:
     """Decode uploaded bytes to a ``(1, 3, H, W)`` float tensor in ``[0, 1]``.
 
     Images are resized so that the longer side is at most *max_side* pixels
-    to keep inference fast.
+    to keep inference fast.  The returned tensor is contiguous and on CPU;
+    it will be moved to the model device in the compare endpoint.
     """
     img = Image.open(io.BytesIO(data)).convert("RGB")
 
@@ -67,7 +92,7 @@ def read_image_as_tensor(data: bytes, max_side: int = 512) -> torch.Tensor:
         img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
 
     arr = np.array(img, dtype=np.float32) / 255.0  # (H, W, 3)
-    tensor = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)  # (1,3,H,W)
+    tensor = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0).contiguous()
     return tensor
 
 
@@ -126,6 +151,76 @@ def tensor_to_base64(tensor: torch.Tensor) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Diagnostics computation
+# ---------------------------------------------------------------------------
+
+# Severity display multipliers (matching the original diagnostics output)
+_SEVERITY_MULTIPLIERS = {
+    "blocking": 5.0,
+    "ringing": 5.0,
+    "noise": 3.0,
+    "color_shift": 3.0,
+    "blur": 2.0,
+}
+
+_ARTIFACT_LABELS = {
+    "blocking": "Severe JPEG Blocking",
+    "ringing": "Gibbs Ringing",
+    "noise": "Noise / Granularity",
+    "color_shift": "Color Shift",
+    "blur": "Blur / Loss of Detail",
+}
+
+
+def compute_diagnostics(diag: torch.Tensor) -> Dict[str, Any]:
+    """Derive severity scores and dominant artifact from the diagnostic tensor.
+
+    Parameters
+    ----------
+    diag : torch.Tensor
+        The 5-channel diagnostic tensor ``(1, 5, H, W)`` produced by
+        ``UPIQAL.forward()``.  Channels:
+        0 = anomaly, 1 = color, 2 = structure, 3 = blocking, 4 = ringing.
+
+    Returns
+    -------
+    dict
+        ``dominant_artifact``, ``severity_scores``, ``affected_area``.
+    """
+    anomaly = diag[0, 0]
+    color_map = diag[0, 1]
+    structure = diag[0, 2]
+    blocking = diag[0, 3]
+    ringing = diag[0, 4]
+
+    blocking_sev = float(blocking.mean().item()) * 100
+    ringing_sev = float(ringing.mean().item()) * 100
+    noise_sev = float(anomaly.mean().item()) * 100
+    color_sev = float(color_map.mean().item()) * 100
+    blur_sev = float((1.0 - structure).mean().item()) * 100
+
+    severity_scores = {
+        "blocking": round(min(blocking_sev * _SEVERITY_MULTIPLIERS["blocking"], 100.0), 1),
+        "ringing": round(min(ringing_sev * _SEVERITY_MULTIPLIERS["ringing"], 100.0), 1),
+        "noise": round(min(noise_sev * _SEVERITY_MULTIPLIERS["noise"], 100.0), 1),
+        "color_shift": round(min(color_sev * _SEVERITY_MULTIPLIERS["color_shift"], 100.0), 1),
+        "blur": round(min(blur_sev * _SEVERITY_MULTIPLIERS["blur"], 100.0), 1),
+    }
+
+    dominant_key = max(severity_scores, key=severity_scores.get)
+    dominant_artifact = _ARTIFACT_LABELS[dominant_key]
+
+    affected_mask = (anomaly > 0.15).float()
+    affected_area = round(float(affected_mask.mean().item()) * 100, 1)
+
+    return {
+        "dominant_artifact": dominant_artifact,
+        "severity_scores": severity_scores,
+        "affected_area": affected_area,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
@@ -140,7 +235,7 @@ async def compare(
     reference_image: UploadFile = File(...),
     target_image: UploadFile = File(...),
 ):
-    """Compare two images using the UPIQAL model.
+    """Compare two images using the real UPIQAL model.
 
     Accepts multipart/form-data with ``reference_image`` and
     ``target_image`` fields.
@@ -162,12 +257,21 @@ async def compare(
             tgt_tensor, size=(rh, rw), mode="bilinear", align_corners=False
         )
 
+    # Move tensors to model device
     model = get_model()
-    result = model(ref_tensor, tgt_tensor)
+    ref_on_device = ref_tensor.to(_device)
+    tgt_on_device = tgt_tensor.to(_device)
+
+    # Run the real UPIQAL pipeline (all 5 modules)
+    result = model(ref_on_device, tgt_on_device)
 
     score = float(result["score"][0].item())
     diag = result["diagnostic_tensor"]  # (1, 5, H, W)
 
+    # Compute diagnostics from the diagnostic tensor
+    diagnostics = compute_diagnostics(diag)
+
+    # Encode heatmap channels as Base64 PNGs
     channel_names = ["anomaly", "color", "structure", "blocking", "ringing"]
     heatmaps = {}
     for i, name in enumerate(channel_names):
@@ -198,5 +302,5 @@ async def compare(
         "heatmaps": heatmaps,
         "overlay": overlay_b64,
         "target": target_b64,
-        "diagnostics": result["diagnostics"],
+        "diagnostics": diagnostics,
     }
