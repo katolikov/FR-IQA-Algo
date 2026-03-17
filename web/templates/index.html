@@ -27,6 +27,53 @@
     .hm-thumb { @apply cursor-pointer rounded-lg border-2 border-transparent transition-all duration-200; }
     .hm-thumb:hover { @apply border-brand-400 shadow-lg shadow-brand-500/20; }
     .hm-thumb.active { @apply border-brand-500 ring-2 ring-brand-500/30; }
+
+    /* Interactive viewer canvas cursor styles */
+    #viewer-canvas { cursor: grab; }
+    #viewer-canvas.grabbing { cursor: grabbing; }
+
+    /* Download button on gallery thumbnails */
+    .hm-download {
+      opacity: 0;
+      transition: opacity 0.15s ease;
+    }
+    .hm-thumb:hover .hm-download { opacity: 1; }
+
+    /* Custom range slider styling for dark theme */
+    #opacity-slider {
+      -webkit-appearance: none;
+      appearance: none;
+      height: 6px;
+      border-radius: 9999px;
+      background: #374151;
+      outline: none;
+    }
+    #opacity-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #6366f1;
+      cursor: pointer;
+      border: 2px solid #312e81;
+      transition: transform 0.1s ease;
+    }
+    #opacity-slider::-webkit-slider-thumb:hover {
+      transform: scale(1.2);
+    }
+    #opacity-slider::-moz-range-thumb {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #6366f1;
+      cursor: pointer;
+      border: 2px solid #312e81;
+    }
+
+    /* Zoom badge fade-out animation */
+    .zoom-badge-hidden { opacity: 0; transition: opacity 0.4s ease; }
+    .zoom-badge-visible { opacity: 1; transition: opacity 0.1s ease; }
   </style>
 </head>
 
@@ -139,28 +186,49 @@
       <!-- ============================================================= -->
       <div class="fade-up grid gap-6 lg:grid-cols-[280px_1fr]" style="animation-delay:.15s">
 
-        <!-- Sidebar: clickable heatmap gallery -->
+        <!-- Sidebar: clickable heatmap gallery with per-item download buttons -->
         <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4">
           <p class="mb-3 text-xs uppercase tracking-widest text-gray-500">Diagnostic Layers</p>
           <div id="hm-gallery" class="grid grid-cols-2 gap-3 lg:grid-cols-1"></div>
         </div>
 
-        <!-- Main viewer: large central image with opacity slider -->
+        <!-- Main viewer: interactive canvas with zoom/pan, download, and opacity slider -->
         <div class="rounded-2xl border border-gray-800 bg-gray-900 p-6">
+
+          <!-- Header: title + Save As PNG button -->
           <div class="mb-4 flex items-center justify-between">
             <h3 id="viewer-title" class="text-lg font-semibold">Anomaly Overlay</h3>
-            <div class="flex items-center gap-3">
-              <label for="opacity-slider" class="text-xs text-gray-400">Heatmap Opacity</label>
-              <input id="opacity-slider" type="range" min="0" max="100" value="100"
-                     class="h-1.5 w-32 cursor-pointer appearance-none rounded-full bg-gray-700 accent-brand-500" />
-              <span id="opacity-val" class="w-10 text-right text-xs tabular-nums text-gray-400">100%</span>
+            <button id="btn-save-main" title="Save current heatmap as PNG"
+                    class="inline-flex items-center gap-1.5 rounded-lg border border-gray-700 bg-gray-800 px-3 py-1.5 text-xs font-medium text-gray-300 transition hover:border-brand-500 hover:bg-gray-700 hover:text-white">
+              <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4"/></svg>
+              Save As PNG
+            </button>
+          </div>
+
+          <!-- Interactive canvas container -->
+          <div id="viewer-container" class="relative overflow-hidden rounded-lg bg-gray-950" style="min-height:400px; height:520px;">
+            <canvas id="viewer-canvas" class="block w-full h-full"></canvas>
+            <!-- Zoom level indicator badge (auto-hides) -->
+            <div id="zoom-badge"
+                 class="zoom-badge-hidden pointer-events-none absolute top-3 right-3 rounded-md bg-black/70 px-2 py-1 text-xs font-mono tabular-nums text-gray-200 backdrop-blur-sm">
+              1.0x
+            </div>
+            <!-- Hint overlay shown until first interaction -->
+            <div id="viewer-hint"
+                 class="pointer-events-none absolute inset-0 flex items-center justify-center">
+              <div class="rounded-lg bg-black/50 px-4 py-2 text-xs text-gray-300 backdrop-blur-sm">
+                Scroll to zoom &middot; Drag to pan &middot; Double-click to reset
+              </div>
             </div>
           </div>
 
-          <!-- Layered image container -->
-          <div class="relative mx-auto flex items-center justify-center overflow-hidden rounded-lg bg-gray-950" style="min-height:320px">
-            <img id="viewer-base" class="max-h-[520px] w-auto rounded-lg" alt="Target base" />
-            <img id="viewer-overlay" class="absolute inset-0 m-auto max-h-[520px] w-auto rounded-lg" alt="Heatmap overlay" style="opacity:1" />
+          <!-- Opacity blending slider (positioned beneath the canvas) -->
+          <div class="mt-4 flex items-center gap-3">
+            <label class="shrink-0 text-xs font-medium text-gray-400">Overlay Opacity</label>
+            <span class="text-[10px] text-gray-500">0%</span>
+            <input id="opacity-slider" type="range" min="0" max="100" value="100" class="flex-1" />
+            <span class="text-[10px] text-gray-500">100%</span>
+            <span id="opacity-val" class="w-10 text-right text-xs tabular-nums font-medium text-brand-400">100%</span>
           </div>
         </div>
       </div>
@@ -207,10 +275,338 @@
   <!-- SCRIPT                                                            -->
   <!-- ================================================================= -->
   <script>
-    // ----- State -----
+    // =====================================================================
+    // ImageViewer — Canvas-based interactive viewer with zoom, pan, and
+    // dual-layer compositing (base image + overlay with adjustable opacity).
+    //
+    // The viewer draws from full-resolution Image objects so zooming in
+    // reveals the original pixel detail rather than upscaling a preview.
+    // =====================================================================
+    class ImageViewer {
+      constructor(canvas, container) {
+        this.canvas    = canvas;
+        this.ctx       = canvas.getContext('2d');
+        this.container = container;
+
+        // Image layers (full-resolution HTMLImageElement objects)
+        this.baseImg    = null;
+        this.overlayImg = null;
+        this.opacity    = 1.0;
+
+        // Transform state
+        this.scale   = 1;
+        this.offsetX = 0;
+        this.offsetY = 0;
+
+        // Zoom limits
+        this.minScale = 0.5;
+        this.maxScale = 20;
+
+        // Drag state
+        this.isDragging = false;
+        this.dragStartX = 0;
+        this.dragStartY = 0;
+        this.dragOffsetX = 0;
+        this.dragOffsetY = 0;
+
+        // Zoom badge auto-hide timer
+        this._zoomBadgeTimer = null;
+
+        // Track whether user has interacted (to dismiss hint)
+        this._interacted = false;
+
+        // Bind event handlers
+        this._onWheel      = this._onWheel.bind(this);
+        this._onMouseDown  = this._onMouseDown.bind(this);
+        this._onMouseMove  = this._onMouseMove.bind(this);
+        this._onMouseUp    = this._onMouseUp.bind(this);
+        this._onDblClick   = this._onDblClick.bind(this);
+        this._onTouchStart = this._onTouchStart.bind(this);
+        this._onTouchMove  = this._onTouchMove.bind(this);
+        this._onTouchEnd   = this._onTouchEnd.bind(this);
+
+        // Attach events
+        canvas.addEventListener('wheel',      this._onWheel, { passive: false });
+        canvas.addEventListener('mousedown',  this._onMouseDown);
+        canvas.addEventListener('mousemove',  this._onMouseMove);
+        canvas.addEventListener('mouseup',    this._onMouseUp);
+        canvas.addEventListener('mouseleave', this._onMouseUp);
+        canvas.addEventListener('dblclick',   this._onDblClick);
+        canvas.addEventListener('touchstart', this._onTouchStart, { passive: false });
+        canvas.addEventListener('touchmove',  this._onTouchMove,  { passive: false });
+        canvas.addEventListener('touchend',   this._onTouchEnd);
+
+        // Keep canvas resolution matched to container size
+        this._resizeObserver = new ResizeObserver(() => this._resize());
+        this._resizeObserver.observe(container);
+        this._resize();
+      }
+
+      // -----------------------------------------------------------------
+      // Public API
+      // -----------------------------------------------------------------
+
+      /** Load new base and overlay images from data-URI strings. */
+      setImages(baseSrc, overlaySrc) {
+        let loaded = 0;
+        const onLoad = () => {
+          loaded++;
+          if (loaded === 2) {
+            this.fitToView();
+            this.render();
+          }
+        };
+
+        this.baseImg = new Image();
+        this.baseImg.onload = onLoad;
+        this.baseImg.src = baseSrc;
+
+        this.overlayImg = new Image();
+        this.overlayImg.onload = onLoad;
+        this.overlayImg.src = overlaySrc;
+      }
+
+      /** Set overlay opacity (0–1) and re-render. */
+      setOpacity(val) {
+        this.opacity = val;
+        this.render();
+      }
+
+      /** Reset zoom/pan so the image fits inside the container. */
+      fitToView() {
+        if (!this.baseImg) return;
+
+        const cw = this.canvas.width;
+        const ch = this.canvas.height;
+        const iw = this.baseImg.naturalWidth;
+        const ih = this.baseImg.naturalHeight;
+
+        // Scale to fit with a small margin
+        const pad = 16;
+        this.scale = Math.min((cw - pad * 2) / iw, (ch - pad * 2) / ih, 1);
+
+        // Centre the image
+        this.offsetX = (cw - iw * this.scale) / 2;
+        this.offsetY = (ch - ih * this.scale) / 2;
+      }
+
+      /** Composite both layers to the canvas. */
+      render() {
+        const ctx = this.ctx;
+        const cw  = this.canvas.width;
+        const ch  = this.canvas.height;
+
+        // Clear with background colour matching the container
+        ctx.fillStyle = '#030712'; // gray-950
+        ctx.fillRect(0, 0, cw, ch);
+
+        if (!this.baseImg) return;
+
+        const iw = this.baseImg.naturalWidth;
+        const ih = this.baseImg.naturalHeight;
+
+        // Use crisp pixel rendering when zoomed in past 1:1
+        ctx.imageSmoothingEnabled = this.scale < 4;
+
+        // Draw base layer at full opacity
+        ctx.globalAlpha = 1.0;
+        ctx.drawImage(this.baseImg, this.offsetX, this.offsetY, iw * this.scale, ih * this.scale);
+
+        // Draw overlay layer with user-controlled opacity
+        if (this.overlayImg) {
+          ctx.globalAlpha = this.opacity;
+          ctx.drawImage(this.overlayImg, this.offsetX, this.offsetY, iw * this.scale, ih * this.scale);
+          ctx.globalAlpha = 1.0;
+        }
+      }
+
+      // -----------------------------------------------------------------
+      // Internal: resizing
+      // -----------------------------------------------------------------
+      _resize() {
+        const rect = this.container.getBoundingClientRect();
+        const dpr  = window.devicePixelRatio || 1;
+
+        // Set the canvas buffer size to match the container at device resolution
+        this.canvas.width  = rect.width  * dpr;
+        this.canvas.height = rect.height * dpr;
+
+        // Scale the context so drawing coordinates use CSS pixels
+        this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+        // Store CSS-pixel dimensions for calculations
+        this._cssW = rect.width;
+        this._cssH = rect.height;
+
+        if (this.baseImg && this.baseImg.naturalWidth) {
+          this.fitToView();
+        }
+        this.render();
+      }
+
+      // -----------------------------------------------------------------
+      // Internal: zoom (mouse wheel)
+      // -----------------------------------------------------------------
+      _onWheel(e) {
+        e.preventDefault();
+        this._dismissHint();
+
+        const rect = this.canvas.getBoundingClientRect();
+        // Mouse position in CSS pixels relative to canvas
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+
+        // Zoom factor (smooth, proportional to scroll delta)
+        const zoomIntensity = 0.001;
+        const delta = -e.deltaY * zoomIntensity;
+        const factor = Math.pow(2, delta * 3);
+
+        const newScale = Math.min(Math.max(this.scale * factor, this.minScale), this.maxScale);
+
+        // Adjust offsets so the point under the cursor stays fixed
+        this.offsetX = mx - (mx - this.offsetX) * (newScale / this.scale);
+        this.offsetY = my - (my - this.offsetY) * (newScale / this.scale);
+        this.scale   = newScale;
+
+        this.render();
+        this._showZoomBadge();
+      }
+
+      // -----------------------------------------------------------------
+      // Internal: pan (mouse drag)
+      // -----------------------------------------------------------------
+      _onMouseDown(e) {
+        if (e.button !== 0) return; // left click only
+        this._dismissHint();
+        this.isDragging  = true;
+        this.dragStartX  = e.clientX;
+        this.dragStartY  = e.clientY;
+        this.dragOffsetX = this.offsetX;
+        this.dragOffsetY = this.offsetY;
+        this.canvas.classList.add('grabbing');
+      }
+
+      _onMouseMove(e) {
+        if (!this.isDragging) return;
+        this.offsetX = this.dragOffsetX + (e.clientX - this.dragStartX);
+        this.offsetY = this.dragOffsetY + (e.clientY - this.dragStartY);
+        this.render();
+      }
+
+      _onMouseUp() {
+        if (!this.isDragging) return;
+        this.isDragging = false;
+        this.canvas.classList.remove('grabbing');
+      }
+
+      // -----------------------------------------------------------------
+      // Internal: double-click to reset view
+      // -----------------------------------------------------------------
+      _onDblClick() {
+        this.fitToView();
+        this.render();
+        this._showZoomBadge();
+      }
+
+      // -----------------------------------------------------------------
+      // Internal: touch support (single-finger pan, pinch-zoom)
+      // -----------------------------------------------------------------
+      _onTouchStart(e) {
+        e.preventDefault();
+        this._dismissHint();
+
+        if (e.touches.length === 1) {
+          // Single-finger pan
+          this.isDragging  = true;
+          this.dragStartX  = e.touches[0].clientX;
+          this.dragStartY  = e.touches[0].clientY;
+          this.dragOffsetX = this.offsetX;
+          this.dragOffsetY = this.offsetY;
+        } else if (e.touches.length === 2) {
+          // Pinch zoom — record initial distance and scale
+          this._pinchDist  = this._touchDist(e.touches);
+          this._pinchScale = this.scale;
+          this._pinchMid   = this._touchMid(e.touches);
+          this._pinchOffX  = this.offsetX;
+          this._pinchOffY  = this.offsetY;
+        }
+      }
+
+      _onTouchMove(e) {
+        e.preventDefault();
+
+        if (e.touches.length === 1 && this.isDragging) {
+          this.offsetX = this.dragOffsetX + (e.touches[0].clientX - this.dragStartX);
+          this.offsetY = this.dragOffsetY + (e.touches[0].clientY - this.dragStartY);
+          this.render();
+        } else if (e.touches.length === 2) {
+          const dist = this._touchDist(e.touches);
+          const ratio = dist / this._pinchDist;
+          const newScale = Math.min(Math.max(this._pinchScale * ratio, this.minScale), this.maxScale);
+
+          const rect = this.canvas.getBoundingClientRect();
+          const midX = this._pinchMid.x - rect.left;
+          const midY = this._pinchMid.y - rect.top;
+
+          this.offsetX = midX - (midX - this._pinchOffX) * (newScale / this._pinchScale);
+          this.offsetY = midY - (midY - this._pinchOffY) * (newScale / this._pinchScale);
+          this.scale   = newScale;
+
+          this.render();
+          this._showZoomBadge();
+        }
+      }
+
+      _onTouchEnd() {
+        this.isDragging = false;
+      }
+
+      _touchDist(touches) {
+        const dx = touches[0].clientX - touches[1].clientX;
+        const dy = touches[0].clientY - touches[1].clientY;
+        return Math.sqrt(dx * dx + dy * dy);
+      }
+
+      _touchMid(touches) {
+        return {
+          x: (touches[0].clientX + touches[1].clientX) / 2,
+          y: (touches[0].clientY + touches[1].clientY) / 2,
+        };
+      }
+
+      // -----------------------------------------------------------------
+      // Internal: zoom badge display
+      // -----------------------------------------------------------------
+      _showZoomBadge() {
+        const badge = document.getElementById('zoom-badge');
+        badge.textContent = this.scale.toFixed(1) + 'x';
+        badge.classList.remove('zoom-badge-hidden');
+        badge.classList.add('zoom-badge-visible');
+
+        clearTimeout(this._zoomBadgeTimer);
+        this._zoomBadgeTimer = setTimeout(() => {
+          badge.classList.remove('zoom-badge-visible');
+          badge.classList.add('zoom-badge-hidden');
+        }, 1500);
+      }
+
+      // -----------------------------------------------------------------
+      // Internal: dismiss interaction hint
+      // -----------------------------------------------------------------
+      _dismissHint() {
+        if (this._interacted) return;
+        this._interacted = true;
+        const hint = document.getElementById('viewer-hint');
+        if (hint) hint.style.display = 'none';
+      }
+    }
+
+    // =====================================================================
+    // Application State
+    // =====================================================================
     let refFile = null;
     let tgtFile = null;
-    let lastData = null;       // store full API response for export
+    let lastData = null;       // full API response for export & downloads
     let activeHeatmap = null;  // currently selected heatmap key
 
     const btnRun      = document.getElementById('btn-run');
@@ -219,7 +615,14 @@
     const results     = document.getElementById('results');
     const errorBanner = document.getElementById('error-banner');
 
-    // ----- File handling helpers -----
+    // Instantiate the interactive viewer
+    const viewerCanvas    = document.getElementById('viewer-canvas');
+    const viewerContainer = document.getElementById('viewer-container');
+    const viewer = new ImageViewer(viewerCanvas, viewerContainer);
+
+    // =====================================================================
+    // File Handling (drag-and-drop + browse)
+    // =====================================================================
     function setupDropZone(dropId, inputId, previewId, onFile) {
       const zone  = document.getElementById(dropId);
       const input = document.getElementById(inputId);
@@ -255,7 +658,9 @@
       btnRun.disabled = !(refFile && tgtFile);
     }
 
-    // ----- Run analysis -----
+    // =====================================================================
+    // Run Analysis
+    // =====================================================================
     btnRun.addEventListener('click', async () => {
       if (!refFile || !tgtFile) return;
       errorBanner.classList.add('hidden');
@@ -288,7 +693,9 @@
       }
     });
 
-    // ----- Heatmap gallery config -----
+    // =====================================================================
+    // Heatmap Gallery Config
+    // =====================================================================
     const hmMeta = [
       { key: 'overlay',   label: 'Anomaly Overlay',       isOverlay: true },
       { key: 'anomaly',   label: 'Global Anomaly' },
@@ -298,7 +705,9 @@
       { key: 'ringing',   label: 'Gibbs Ringing' },
     ];
 
-    // ----- Severity bar colors -----
+    // =====================================================================
+    // Severity Bar Config
+    // =====================================================================
     const severityColors = {
       blocking:    '#ef4444',
       ringing:     '#f97316',
@@ -314,7 +723,21 @@
       blur:        'Blur',
     };
 
-    // ----- Render results -----
+    // =====================================================================
+    // Download Helper — triggers a browser download of a Base64 PNG
+    // =====================================================================
+    function downloadBase64Image(base64Data, filename) {
+      const a = document.createElement('a');
+      a.href = 'data:image/png;base64,' + base64Data;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+
+    // =====================================================================
+    // Render Results
+    // =====================================================================
     function renderResults(data) {
       const score = data.score;
       const diag  = data.diagnostics;
@@ -360,22 +783,45 @@
       document.getElementById('result-ref').src = document.getElementById('preview-ref').src;
       document.getElementById('result-tgt').src = 'data:image/png;base64,' + data.target;
 
-      // --- Build heatmap gallery ---
+      // --- Build heatmap gallery with per-thumbnail download buttons ---
       const gallery = document.getElementById('hm-gallery');
       gallery.innerHTML = '';
+
+      // SVG icon for download buttons (small arrow-down icon)
+      const dlIconSvg = '<svg class="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">' +
+        '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4"/></svg>';
+
       hmMeta.forEach((hm, i) => {
         const src = hm.isOverlay
           ? 'data:image/png;base64,' + data.overlay
           : 'data:image/png;base64,' + data.heatmaps[hm.key];
 
         const wrapper = document.createElement('div');
-        wrapper.className = 'hm-thumb p-1' + (i === 0 ? ' active' : '');
+        wrapper.className = 'hm-thumb relative p-1' + (i === 0 ? ' active' : '');
         wrapper.dataset.key = hm.key;
+
         wrapper.innerHTML =
           '<img src="' + src + '" class="w-full rounded" alt="' + hm.label + '" />' +
+          '<button class="hm-download absolute top-2 right-2 flex h-6 w-6 items-center justify-center rounded-md bg-black/60 text-white backdrop-blur-sm transition hover:bg-brand-600" title="Download ' + hm.label + ' as PNG">' +
+            dlIconSvg +
+          '</button>' +
           '<p class="mt-1 text-center text-[10px] font-medium text-gray-400">' + hm.label + '</p>';
 
-        wrapper.addEventListener('click', () => selectHeatmap(hm.key, hm.label, wrapper));
+        // Click on thumbnail image → select this heatmap in viewer
+        wrapper.addEventListener('click', (e) => {
+          // Don't select if the download button was clicked
+          if (e.target.closest('.hm-download')) return;
+          selectHeatmap(hm.key, hm.label, wrapper);
+        });
+
+        // Click on download button → save this heatmap as PNG
+        const dlBtn = wrapper.querySelector('.hm-download');
+        dlBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const b64 = hm.isOverlay ? data.overlay : data.heatmaps[hm.key];
+          downloadBase64Image(b64, 'upiqal-' + hm.key + '.png');
+        });
+
         gallery.appendChild(wrapper);
       });
 
@@ -387,43 +833,67 @@
       slider.value = 100;
       document.getElementById('opacity-val').textContent = '100%';
 
+      // --- Show hint again for new results ---
+      const hint = document.getElementById('viewer-hint');
+      if (hint) {
+        hint.style.display = '';
+        viewer._interacted = false;
+      }
+
       results.classList.remove('hidden');
       results.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
-    // ----- Select a heatmap for the main viewer -----
+    // =====================================================================
+    // Select a Heatmap for the Main Viewer
+    // =====================================================================
     function selectHeatmap(key, label, thumbEl) {
       if (!lastData) return;
 
-      // Update active thumb
+      // Update active thumb highlight
       document.querySelectorAll('.hm-thumb').forEach(el => el.classList.remove('active'));
       if (thumbEl) thumbEl.classList.add('active');
       activeHeatmap = key;
 
-      // Update title
+      // Update viewer title
       document.getElementById('viewer-title').textContent = label;
 
-      // Set base image (always the target)
-      document.getElementById('viewer-base').src = 'data:image/png;base64,' + lastData.target;
-
-      // Set overlay image
+      // Build data-URI sources for the canvas viewer
+      const baseSrc = 'data:image/png;base64,' + lastData.target;
       const overlaySrc = key === 'overlay'
         ? 'data:image/png;base64,' + lastData.overlay
         : 'data:image/png;base64,' + lastData.heatmaps[key];
-      document.getElementById('viewer-overlay').src = overlaySrc;
 
-      // Apply current slider value
+      // Load images into the interactive canvas viewer at full resolution
+      viewer.setImages(baseSrc, overlaySrc);
+
+      // Apply current opacity slider value
       const slider = document.getElementById('opacity-slider');
-      document.getElementById('viewer-overlay').style.opacity = slider.value / 100;
+      viewer.setOpacity(slider.value / 100);
     }
 
-    // ----- Opacity slider -----
+    // =====================================================================
+    // Opacity Slider — blends the selected heatmap over the target image
+    // =====================================================================
     document.getElementById('opacity-slider').addEventListener('input', function() {
-      document.getElementById('viewer-overlay').style.opacity = this.value / 100;
+      viewer.setOpacity(this.value / 100);
       document.getElementById('opacity-val').textContent = this.value + '%';
     });
 
-    // ----- Export JSON report -----
+    // =====================================================================
+    // Save As PNG — main viewer download button
+    // =====================================================================
+    document.getElementById('btn-save-main').addEventListener('click', () => {
+      if (!lastData || !activeHeatmap) return;
+      const b64 = activeHeatmap === 'overlay'
+        ? lastData.overlay
+        : lastData.heatmaps[activeHeatmap];
+      downloadBase64Image(b64, 'upiqal-' + activeHeatmap + '.png');
+    });
+
+    // =====================================================================
+    // Export JSON Report
+    // =====================================================================
     document.getElementById('btn-export').addEventListener('click', () => {
       if (!lastData) return;
       const report = {
