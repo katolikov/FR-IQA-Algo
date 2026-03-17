@@ -25,6 +25,7 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import HTMLResponse
 from PIL import Image
@@ -138,12 +139,17 @@ def read_image_as_tensor(
     height: int = 0,
     pixel_format: str = "RGB888",
     filename: str = "",
-) -> torch.Tensor:
+) -> tuple[torch.Tensor, int, int]:
     """Decode uploaded bytes to a ``(1, 3, H, W)`` float tensor in ``[0, 1]``.
 
     For standard image formats (PNG, JPEG) the raw-format parameters are
     ignored.  For raw/binary uploads the *width*, *height*, and
     *pixel_format* are used to interpret the byte stream.
+
+    Returns
+    -------
+    tuple[torch.Tensor, int, int]
+        The image tensor and the original (height, width) before any resizing.
     """
     ext = Path(filename).suffix.lower() if filename else ""
     is_raw = ext in _RAW_EXTENSIONS
@@ -154,6 +160,9 @@ def read_image_as_tensor(
     else:
         img = Image.open(io.BytesIO(data)).convert("RGB")
 
+    # Store original dimensions before any resizing
+    orig_w, orig_h = img.size
+
     # Resize keeping aspect ratio
     w, h = img.size
     if max(w, h) > max_side:
@@ -162,7 +171,7 @@ def read_image_as_tensor(
 
     arr = np.array(img, dtype=np.float32) / 255.0  # (H, W, 3)
     tensor = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0).contiguous()
-    return tensor
+    return tensor, orig_h, orig_w
 
 
 def _apply_colormap(single_channel: np.ndarray) -> np.ndarray:
@@ -326,15 +335,15 @@ async def compare(
         pixel_format=pixel_format,
         filename=reference_image.filename or "",
     )
-    ref_tensor = read_image_as_tensor(ref_bytes, **raw_kw)
+    ref_tensor, orig_h, orig_w = read_image_as_tensor(ref_bytes, **raw_kw)
     raw_kw["filename"] = target_image.filename or ""
-    tgt_tensor = read_image_as_tensor(tgt_bytes, **raw_kw)
+    tgt_tensor, _, _ = read_image_as_tensor(tgt_bytes, **raw_kw)
 
     # Ensure same spatial dimensions (resize target to match reference)
     _, _, rh, rw = ref_tensor.shape
     _, _, th, tw = tgt_tensor.shape
     if (rh, rw) != (th, tw):
-        tgt_tensor = torch.nn.functional.interpolate(
+        tgt_tensor = F.interpolate(
             tgt_tensor, size=(rh, rw), mode="bilinear", align_corners=False
         )
 
@@ -348,6 +357,16 @@ async def compare(
 
     score = float(result["score"][0].item())
     diag = result["diagnostic_tensor"]  # (1, 5, H, W)
+
+    # Upsample diagnostic tensor and target to original input resolution
+    if diag.shape[2:] != (orig_h, orig_w):
+        diag = F.interpolate(
+            diag, size=(orig_h, orig_w), mode="bilinear", align_corners=False
+        )
+    if tgt_tensor.shape[2:] != (orig_h, orig_w):
+        tgt_tensor = F.interpolate(
+            tgt_tensor, size=(orig_h, orig_w), mode="bilinear", align_corners=False
+        )
 
     # Compute diagnostics from the diagnostic tensor
     diagnostics = compute_diagnostics(diag)
