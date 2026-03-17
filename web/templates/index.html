@@ -337,6 +337,9 @@
         this.offsetX = 0;
         this.offsetY = 0;
 
+        // Device pixel ratio (cached for render-time transform)
+        this._dpr = window.devicePixelRatio || 1;
+
         // Zoom limits
         this.minScale = 0.5;
         this.maxScale = 20;
@@ -411,21 +414,25 @@
         this.render();
       }
 
-      /** Reset zoom/pan so the image fits inside the container. */
+      /** Reset zoom/pan so the image fits inside the container (object-fit: contain). */
       fitToView() {
         if (!this.baseImg) return;
 
-        // Use CSS-pixel dimensions (not DPR-scaled canvas buffer size)
-        const cw = this._cssW || this.container.getBoundingClientRect().width;
-        const ch = this._cssH || this.container.getBoundingClientRect().height;
+        // Re-read container CSS-pixel dimensions to handle layout changes
+        const rect = this.container.getBoundingClientRect();
+        const cw = rect.width;
+        const ch = rect.height;
         const iw = this.baseImg.naturalWidth;
         const ih = this.baseImg.naturalHeight;
 
-        // Scale to fit with a small margin
-        const pad = 16;
-        this.scale = Math.min((cw - pad * 2) / iw, (ch - pad * 2) / ih, 1);
+        if (!iw || !ih) return;
 
-        // Centre the image
+        // Scale to fit with a small margin, mimicking object-fit: contain.
+        // No cap at 1 — the image always fills the available space.
+        const pad = 16;
+        this.scale = Math.min((cw - pad * 2) / iw, (ch - pad * 2) / ih);
+
+        // Centre the image (reset any panning offset)
         this.offsetX = (cw - iw * this.scale) / 2;
         this.offsetY = (ch - ih * this.scale) / 2;
       }
@@ -433,10 +440,18 @@
       /** Composite both layers to the canvas. */
       render() {
         const ctx = this.ctx;
-        const cw  = this.canvas.width;
-        const ch  = this.canvas.height;
+        const dpr = this._dpr;
 
-        // Clear with background colour matching the container
+        // Always re-apply the DPR transform so rendering is correct even if
+        // the canvas context state was silently reset (tab switch, browser GC,
+        // or any path that missed _resize).  This is the root-cause fix for
+        // the "reset shrinks to half-size" bug on high-DPI displays.
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+        // Clear using CSS-pixel dimensions (not the DPR-scaled canvas buffer)
+        const cw = this._cssW || this.container.getBoundingClientRect().width;
+        const ch = this._cssH || this.container.getBoundingClientRect().height;
+
         ctx.fillStyle = '#030712'; // gray-950
         ctx.fillRect(0, 0, cw, ch);
 
@@ -467,16 +482,19 @@
         const rect = this.container.getBoundingClientRect();
         const dpr  = window.devicePixelRatio || 1;
 
+        // Refresh cached DPR (handles moving between monitors)
+        this._dpr = dpr;
+
         // Set the canvas buffer size to match the container at device resolution
         this.canvas.width  = rect.width  * dpr;
         this.canvas.height = rect.height * dpr;
 
-        // Scale the context so drawing coordinates use CSS pixels
-        this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
         // Store CSS-pixel dimensions for calculations
         this._cssW = rect.width;
         this._cssH = rect.height;
+
+        // Note: the DPR context transform is applied in render() on every
+        // frame, so we no longer need to set it here.
 
         if (this.baseImg && this.baseImg.naturalWidth) {
           this.fitToView();
