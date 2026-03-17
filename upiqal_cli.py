@@ -471,11 +471,12 @@ def run_pipeline(args: argparse.Namespace) -> None:
     normalizer = Normalizer(mode="imagenet")
     chromatic = ChromaticTransportEvaluator(patch_size=16, sinkhorn_iters=20)
 
-    # Deep feature extractor — try pretrained, fallback to random init
+    # Deep feature extractor — try pretrained from local weights, fallback to random init
     try:
         deep_stats = DeepStatisticalExtractor(pretrained=True)
-        vgg_status = "ImageNet (pretrained)"
-    except Exception:
+        vgg_status = "ImageNet (pretrained, local)"
+    except FileNotFoundError:
+        print("  [warn] Local VGG16 weights not found. Run: python weights/download_vgg16.py")
         deep_stats = DeepStatisticalExtractor(pretrained=False)
         vgg_status = "random initialization (pretrained weights unavailable)"
     print(f"  VGG16 weights: {vgg_status}")

@@ -59,8 +59,8 @@ _model: Optional[UPIQAL] = None
 def get_model() -> UPIQAL:
     """Return the global UPIQAL model, initialising it on first call.
 
-    The pretrained VGG16 weights are downloaded on the very first run
-    (~528 MB) and cached by torchvision.  The full model is moved to
+    The pretrained VGG16 weights are loaded from the local
+    ``weights/vgg16-397923af.pth`` file.  The full model is moved to
     the best available device and set to eval mode.
     """
     global _model

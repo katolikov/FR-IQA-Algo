@@ -8,12 +8,17 @@ texture probability mapping.
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
+
+# Default path to the local VGG16 weights file (relative to this source file).
+_WEIGHTS_DIR = Path(__file__).resolve().parent.parent / "weights"
+_DEFAULT_VGG16_WEIGHTS = _WEIGHTS_DIR / "vgg16-397923af.pth"
 
 
 # ======================================================================
@@ -118,15 +123,30 @@ class VGG16FeatureExtractor(nn.Module):
     ----------
     pretrained : bool
         Whether to load ImageNet-pretrained weights (default True).
+    weights_path : str or Path or None
+        Explicit path to a local ``.pth`` file.  When *None* (the default)
+        and ``pretrained=True``, the extractor looks for the bundled file at
+        ``<project_root>/weights/vgg16-397923af.pth``.
     """
 
-    def __init__(self, pretrained: bool = True) -> None:
+    def __init__(
+        self,
+        pretrained: bool = True,
+        weights_path: Optional[str | Path] = None,
+    ) -> None:
         super().__init__()
+        # Always create the architecture without triggering any download.
+        vgg = models.vgg16(weights=None)
+
         if pretrained:
-            weights = models.VGG16_Weights.IMAGENET1K_V1
-            vgg = models.vgg16(weights=weights)
-        else:
-            vgg = models.vgg16(weights=None)
+            wpath = Path(weights_path) if weights_path else _DEFAULT_VGG16_WEIGHTS
+            if not wpath.exists():
+                raise FileNotFoundError(
+                    f"Local VGG16 weights not found at {wpath}.  "
+                    "Run 'python weights/download_vgg16.py' to fetch them."
+                )
+            state = torch.load(wpath, map_location="cpu", weights_only=True)
+            vgg.load_state_dict(state)
         self.features = vgg.features
         # Freeze all parameters
         for p in self.features.parameters():
@@ -200,9 +220,12 @@ class DeepStatisticalExtractor(nn.Module):
         pretrained: bool = True,
         sigmoid_gain: float = 5.0,
         sigmoid_bias: float = 1.0,
+        weights_path: Optional[str | Path] = None,
     ) -> None:
         super().__init__()
-        self.vgg = VGG16FeatureExtractor(pretrained=pretrained)
+        self.vgg = VGG16FeatureExtractor(
+            pretrained=pretrained, weights_path=weights_path
+        )
         self.pool = L2HanningPool(kernel_size)
         self.kernel_size = kernel_size
         self.sigmoid_gain = sigmoid_gain
