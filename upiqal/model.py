@@ -6,7 +6,8 @@ score and multi-channel Diagnostic Tensor.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from pathlib import Path
+from typing import Any, Dict, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -66,6 +67,7 @@ class UPIQAL(nn.Module):
         w_anomaly: float = 0.3,
         w_structure: float = 0.5,
         w_heuristic: float = 0.1,
+        vgg_weights_path: Union[str, Path, None] = None,
     ) -> None:
         super().__init__()
 
@@ -85,6 +87,7 @@ class UPIQAL(nn.Module):
         )
         self.deep_stats = DeepStatisticalExtractor(
             pretrained=pretrained_vgg,
+            weights_path=vgg_weights_path,
         )
         self.uncertainty = ProbabilisticUncertaintyMapper()
         self.heuristics = SpatialHeuristicsEngine()
