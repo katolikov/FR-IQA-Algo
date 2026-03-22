@@ -17,5 +17,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
 
+[project.scripts]
+app = "web.main:app"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
