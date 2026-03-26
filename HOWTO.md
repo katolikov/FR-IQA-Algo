@@ -51,7 +51,35 @@ pip install -r requirements.txt
 | `POT` | Sinkhorn–Knopp optimal transport (EMD approximation) |
 | `colour-science` | sRGB → Oklab color space conversion |
 
-## 4. Start the web server
+## 4. Download the VGG16 model
+
+The pipeline requires pre-trained VGG16 weights (~528 MB). Run the download script once:
+
+```bash
+python weights/download_vgg16.py
+```
+
+The file is saved to `weights/vgg16-397923af.pth`. If the file already exists the script exits immediately.
+
+## 5. Run the CLI script
+
+The CLI currently supports **PNG images only** as input.
+
+```bash
+python upiqal_cli.py --reference ref.png --target tgt.png --output-dir results/
+```
+
+| Flag | Description |
+|---|---|
+| `--reference` | Path to the reference (pristine) PNG image |
+| `--target` | Path to the target (distorted) PNG image |
+| `--output-dir` | Directory to save results (default: auto-generated with timestamp) |
+| `--name` | Custom label for the auto-generated output directory name |
+| `--max-side` | Maximum pixel dimension for the longer side (default: 512) |
+
+The output directory will contain diagnostic heatmap PNGs and a `report.json` with the overall quality score and artifact breakdown.
+
+## 6. Start the web server
 
 Install `uvicorn` if not already included in your requirements:
 
@@ -76,7 +104,7 @@ The API will be available at `http://localhost:8000`.
 
 Remove `--reload` in production.
 
-## 5. Deactivate the virtual environment
+## 7. Deactivate the virtual environment
 
 ```bash
 deactivate
