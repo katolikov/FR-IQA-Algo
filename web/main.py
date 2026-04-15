@@ -77,23 +77,125 @@ def get_model() -> UPIQAL:
 # ---------------------------------------------------------------------------
 
 
-def _nv21_to_rgb(data: bytes, width: int, height: int) -> np.ndarray:
-    """Convert NV21 (YUV420SP) raw bytes to ``(H, W, 3)`` uint8 RGB."""
+_PIXEL_FORMATS = ("NV21", "NV12", "GRAY8", "RGB888")
+
+
+def _yuv420sp_to_rgb(
+    data: bytes, width: int, height: int, chroma_order: str,
+) -> np.ndarray:
+    """Convert a YUV 4:2:0 semi-planar buffer to ``(H, W, 3)`` uint8 RGB.
+
+    *chroma_order* is ``"VU"`` for NV21 and ``"UV"`` for NV12.
+    """
+    if width <= 0 or height <= 0:
+        raise ValueError(f"YUV420SP requires positive dimensions, got {width}x{height}")
+    if chroma_order not in ("VU", "UV"):
+        raise ValueError(f"chroma_order must be 'VU' or 'UV', got {chroma_order!r}")
+
     y_size = width * height
-    uv_size = y_size // 2
-    if len(data) < y_size + uv_size:
+    cw = (width + 1) // 2
+    ch = (height + 1) // 2
+    uv_size = cw * ch * 2
+    expected = y_size + uv_size
+    if len(data) < expected:
+        fmt_name = "NV21" if chroma_order == "VU" else "NV12"
         raise ValueError(
-            f"NV21 data too short: expected {y_size + uv_size} bytes "
+            f"{fmt_name} data too short: expected {expected} bytes "
             f"for {width}x{height}, got {len(data)}"
         )
-    y = np.frombuffer(data, np.uint8, count=y_size).reshape(height, width).astype(np.float32)
-    vu = np.frombuffer(data, np.uint8, offset=y_size, count=uv_size).reshape(height // 2, width // 2, 2)
-    v = np.repeat(np.repeat(vu[:, :, 0].astype(np.float32), 2, 0), 2, 1)[:height, :width]
-    u = np.repeat(np.repeat(vu[:, :, 1].astype(np.float32), 2, 0), 2, 1)[:height, :width]
+
+    y = (
+        np.frombuffer(data, np.uint8, count=y_size)
+        .reshape(height, width)
+        .astype(np.float32)
+    )
+    chroma = np.frombuffer(
+        data, np.uint8, offset=y_size, count=uv_size,
+    ).reshape(ch, cw, 2)
+
+    if chroma_order == "VU":
+        v_plane = chroma[:, :, 0].astype(np.float32)
+        u_plane = chroma[:, :, 1].astype(np.float32)
+    else:
+        u_plane = chroma[:, :, 0].astype(np.float32)
+        v_plane = chroma[:, :, 1].astype(np.float32)
+
+    u = np.repeat(np.repeat(u_plane, 2, axis=0), 2, axis=1)[:height, :width]
+    v = np.repeat(np.repeat(v_plane, 2, axis=0), 2, axis=1)[:height, :width]
+
     r = np.clip(y + 1.370705 * (v - 128), 0, 255)
     g = np.clip(y - 0.337633 * (u - 128) - 0.698001 * (v - 128), 0, 255)
     b = np.clip(y + 1.732446 * (u - 128), 0, 255)
     return np.stack([r, g, b], axis=-1).astype(np.uint8)
+
+
+def _nv21_to_rgb(data: bytes, width: int, height: int) -> np.ndarray:
+    """Convert NV21 (YUV420SP, VU interleaved) raw bytes to ``(H, W, 3)`` RGB."""
+    return _yuv420sp_to_rgb(data, width, height, chroma_order="VU")
+
+
+def _nv12_to_rgb(data: bytes, width: int, height: int) -> np.ndarray:
+    """Convert NV12 (YUV420SP, UV interleaved) raw bytes to ``(H, W, 3)`` RGB."""
+    return _yuv420sp_to_rgb(data, width, height, chroma_order="UV")
+
+
+def _npy_array_to_rgb_uint8(arr: np.ndarray) -> np.ndarray:
+    """Normalize an arbitrary ``np.load`` result to an ``(H, W, 3)`` uint8 RGB image.
+
+    Mirrors :func:`upiqal_cli._npy_array_to_rgb_uint8` so the web and CLI
+    front-ends accept the same set of ``.npy`` shapes and dtypes.
+    """
+    if not isinstance(arr, np.ndarray):
+        raise ValueError(f".npy payload is not an ndarray: {type(arr)!r}")
+    if arr.size == 0:
+        raise ValueError(f".npy array is empty (shape={arr.shape})")
+
+    # Squeeze leading singleton batch dimensions like (1, H, W, 3).
+    while arr.ndim == 4 and arr.shape[0] == 1:
+        arr = arr[0]
+
+    if arr.ndim == 2:
+        arr = np.stack([arr, arr, arr], axis=-1)
+    elif arr.ndim == 3:
+        h0, h1, h2 = arr.shape
+        if h2 == 1:
+            arr = np.repeat(arr, 3, axis=2)
+        elif h2 == 3:
+            pass
+        elif h2 == 4:
+            arr = arr[:, :, :3]
+        elif h0 == 3 and h2 != 3:
+            arr = np.transpose(arr, (1, 2, 0))
+        elif h0 == 1:
+            arr = np.repeat(np.transpose(arr, (1, 2, 0)), 3, axis=2)
+        else:
+            raise ValueError(
+                f".npy array has unsupported 3D shape {arr.shape}; "
+                "expected (H, W), (H, W, 1), (H, W, 3/4), or (3, H, W)"
+            )
+    else:
+        raise ValueError(
+            f".npy array has unsupported ndim={arr.ndim} (shape={arr.shape}); "
+            "expected 2D grayscale or 3D RGB"
+        )
+
+    if arr.dtype == np.uint8:
+        return np.ascontiguousarray(arr)
+
+    if np.issubdtype(arr.dtype, np.integer):
+        info = np.iinfo(arr.dtype)
+        max_val = max(int(info.max), 1)
+        scaled = arr.astype(np.float32) * (255.0 / max_val)
+        return np.clip(scaled, 0, 255).astype(np.uint8)
+
+    if np.issubdtype(arr.dtype, np.floating):
+        f = np.nan_to_num(arr.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+        peak = float(f.max()) if f.size else 0.0
+        if peak <= 1.001:
+            f = f * 255.0
+        return np.clip(f, 0, 255).astype(np.uint8)
+
+    raise ValueError(f".npy array has unsupported dtype {arr.dtype!r}")
 
 
 def _decode_raw_bytes(
@@ -105,31 +207,56 @@ def _decode_raw_bytes(
 ) -> np.ndarray:
     """Decode raw/binary upload bytes to ``(H, W, 3)`` uint8 RGB.
 
-    Handles ``.npy`` (by extension in *filename*), NV21, GRAY8, RGB888.
+    Handles ``.npy`` (by extension in *filename*), NV21, NV12, GRAY8, RGB888.
+    The file extensions ``.nv21`` / ``.nv12`` override the explicit
+    *pixel_format* argument.
     """
     ext = Path(filename).suffix.lower() if filename else ""
 
     if ext == ".npy":
-        arr = np.load(io.BytesIO(data))
-        if arr.ndim == 2:
-            arr = np.stack([arr, arr, arr], axis=-1)
-        if arr.dtype != np.uint8:
-            arr = (arr * 255).clip(0, 255).astype(np.uint8) if arr.max() <= 1.0 else arr.clip(0, 255).astype(np.uint8)
-        return arr
+        arr = np.load(io.BytesIO(data), allow_pickle=False)
+        return _npy_array_to_rgb_uint8(arr)
 
     fmt = pixel_format.upper()
-    if fmt == "NV21" or ext == ".nv21":
+    if ext == ".nv21":
+        fmt = "NV21"
+    elif ext == ".nv12":
+        fmt = "NV12"
+
+    if fmt == "NV21":
         return _nv21_to_rgb(data, width, height)
-    elif fmt == "GRAY8":
-        gray = np.frombuffer(data, np.uint8, count=width * height).reshape(height, width)
+    if fmt == "NV12":
+        return _nv12_to_rgb(data, width, height)
+    if fmt == "GRAY8":
+        expected = width * height
+        if expected <= 0:
+            raise ValueError(
+                f"GRAY8 requires positive width/height, got {width}x{height}"
+            )
+        if len(data) < expected:
+            raise ValueError(
+                f"GRAY8 data too short: expected {expected} bytes, got {len(data)}"
+            )
+        gray = np.frombuffer(data, np.uint8, count=expected).reshape(height, width)
         return np.stack([gray, gray, gray], axis=-1)
-    elif fmt == "RGB888":
-        return np.frombuffer(data, np.uint8, count=width * height * 3).reshape(height, width, 3)
-    else:
-        raise ValueError(f"Unsupported pixel_format: {pixel_format!r}")
+    if fmt == "RGB888":
+        expected = width * height * 3
+        if expected <= 0:
+            raise ValueError(
+                f"RGB888 requires positive width/height, got {width}x{height}"
+            )
+        if len(data) < expected:
+            raise ValueError(
+                f"RGB888 data too short: expected {expected} bytes, got {len(data)}"
+            )
+        return np.frombuffer(data, np.uint8, count=expected).reshape(height, width, 3)
+
+    raise ValueError(
+        f"Unsupported pixel_format: {pixel_format!r} (expected one of {_PIXEL_FORMATS})"
+    )
 
 
-_RAW_EXTENSIONS = {".raw", ".bin", ".nv21", ".npy"}
+_RAW_EXTENSIONS = {".raw", ".bin", ".nv21", ".nv12", ".yuv", ".npy"}
 
 
 def read_image_as_tensor(

@@ -18,6 +18,7 @@ Usage:
     python upiqal_cli.py --reference ref.png --target tgt.png --max-side 256
     python upiqal_cli.py --reference ref.raw --target tgt.raw --width 640 --height 480 --pixel_format RGB888
     python upiqal_cli.py --reference ref.nv21 --target tgt.nv21 --width 640 --height 480 --pixel_format NV21 --output_format npy
+    python upiqal_cli.py --reference ref.nv12 --target tgt.nv12 --width 640 --height 480 --pixel_format NV12
 
 Dependencies:
     torch>=2.0, torchvision>=0.15, numpy>=1.24, pillow>=10.0
@@ -56,7 +57,8 @@ from upiqal import __version__ as UPIQAL_VERSION
 # Raw / binary format constants
 # ======================================================================
 
-_RAW_EXTENSIONS = {".raw", ".bin", ".nv21", ".npy"}
+_RAW_EXTENSIONS = {".raw", ".bin", ".nv21", ".nv12", ".yuv", ".npy"}
+_PIXEL_FORMATS = ("NV21", "NV12", "GRAY8", "RGB888")
 
 
 # ======================================================================
@@ -64,30 +66,63 @@ _RAW_EXTENSIONS = {".raw", ".bin", ".nv21", ".npy"}
 # ======================================================================
 
 
-def _nv21_to_rgb(data: bytes, width: int, height: int) -> np.ndarray:
-    """Convert NV21 (YUV420SP) raw bytes to an ``(H, W, 3)`` uint8 RGB array.
+def _yuv420sp_to_rgb(
+    data: bytes, width: int, height: int, chroma_order: str,
+) -> np.ndarray:
+    """Convert a YUV 4:2:0 semi-planar buffer to an ``(H, W, 3)`` uint8 RGB array.
 
-    NV21 layout: ``H*W`` bytes of Y, then ``H/2 * W`` bytes of interleaved VU.
+    Parameters
+    ----------
+    data : bytes
+        Raw bytes of the YUV frame (Y plane followed by interleaved chroma).
+    width, height : int
+        Frame dimensions in pixels.  Both must be > 0; for sub-sampled chroma
+        to round-trip exactly, even dimensions are recommended.
+    chroma_order : str
+        ``"VU"`` for NV21 (V byte first, U byte second) or ``"UV"`` for NV12
+        (U byte first, V byte second).
     """
+    if width <= 0 or height <= 0:
+        raise ValueError(f"YUV420SP requires positive dimensions, got {width}x{height}")
+    if chroma_order not in ("VU", "UV"):
+        raise ValueError(f"chroma_order must be 'VU' or 'UV', got {chroma_order!r}")
+
     y_size = width * height
-    uv_size = y_size // 2
+    # Chroma is sub-sampled by 2 in each axis; round up to keep the trailing
+    # row/column when the dimensions are odd.
+    cw = (width + 1) // 2
+    ch = (height + 1) // 2
+    uv_size = cw * ch * 2
     expected = y_size + uv_size
     if len(data) < expected:
+        fmt_name = "NV21" if chroma_order == "VU" else "NV12"
         raise ValueError(
-            f"NV21 data too short: expected {expected} bytes for "
+            f"{fmt_name} data too short: expected {expected} bytes for "
             f"{width}x{height}, got {len(data)}"
         )
 
-    y_plane = np.frombuffer(data, dtype=np.uint8, count=y_size).reshape(height, width).astype(np.float32)
-    vu = np.frombuffer(data, dtype=np.uint8, offset=y_size, count=uv_size).reshape(height // 2, width // 2, 2)
-    v_plane = vu[:, :, 0].astype(np.float32)
-    u_plane = vu[:, :, 1].astype(np.float32)
+    y_plane = (
+        np.frombuffer(data, dtype=np.uint8, count=y_size)
+        .reshape(height, width)
+        .astype(np.float32)
+    )
+    chroma = np.frombuffer(
+        data, dtype=np.uint8, offset=y_size, count=uv_size,
+    ).reshape(ch, cw, 2)
 
-    # Upsample U/V to full resolution
+    if chroma_order == "VU":
+        v_plane = chroma[:, :, 0].astype(np.float32)
+        u_plane = chroma[:, :, 1].astype(np.float32)
+    else:  # UV (NV12)
+        u_plane = chroma[:, :, 0].astype(np.float32)
+        v_plane = chroma[:, :, 1].astype(np.float32)
+
+    # Upsample chroma planes to full resolution by pixel-replication, then
+    # crop to the requested odd dimensions if necessary.
     u_full = np.repeat(np.repeat(u_plane, 2, axis=0), 2, axis=1)[:height, :width]
     v_full = np.repeat(np.repeat(v_plane, 2, axis=0), 2, axis=1)[:height, :width]
 
-    # YUV → RGB (BT.601)
+    # YUV → RGB (BT.601 full-range coefficients used for standard NV21/NV12).
     r = np.clip(y_plane + 1.370705 * (v_full - 128.0), 0, 255)
     g = np.clip(y_plane - 0.337633 * (u_full - 128.0) - 0.698001 * (v_full - 128.0), 0, 255)
     b = np.clip(y_plane + 1.732446 * (u_full - 128.0), 0, 255)
@@ -95,50 +130,144 @@ def _nv21_to_rgb(data: bytes, width: int, height: int) -> np.ndarray:
     return np.stack([r, g, b], axis=-1).astype(np.uint8)
 
 
+def _nv21_to_rgb(data: bytes, width: int, height: int) -> np.ndarray:
+    """Convert NV21 (YUV420SP, VU interleaved) raw bytes to ``(H, W, 3)`` RGB."""
+    return _yuv420sp_to_rgb(data, width, height, chroma_order="VU")
+
+
+def _nv12_to_rgb(data: bytes, width: int, height: int) -> np.ndarray:
+    """Convert NV12 (YUV420SP, UV interleaved) raw bytes to ``(H, W, 3)`` RGB."""
+    return _yuv420sp_to_rgb(data, width, height, chroma_order="UV")
+
+
+def _npy_array_to_rgb_uint8(arr: np.ndarray) -> np.ndarray:
+    """Normalize an arbitrary ``np.load`` result to an ``(H, W, 3)`` uint8 RGB image.
+
+    Handles the shape and dtype variations commonly produced by CV pipelines:
+
+    * 2D ``(H, W)`` grayscale -> tiled to RGB.
+    * 3D ``(H, W, 1)`` -> squeezed and tiled to RGB.
+    * 3D ``(H, W, 3)`` / ``(H, W, 4)`` -> kept (alpha dropped).
+    * 3D ``(3, H, W)`` channels-first -> transposed.
+    * 4D leading singleton (``(1, ...)``) -> squeezed and re-evaluated.
+
+    Integer dtypes are rescaled by their full ``iinfo.max`` range; floating
+    dtypes have ``NaN``/``Inf`` replaced with zero, and are scaled from
+    ``[0, 1]`` if the observed maximum is <= 1.001, otherwise clipped to
+    ``[0, 255]``.
+    """
+    if not isinstance(arr, np.ndarray):
+        raise ValueError(f".npy payload is not an ndarray: {type(arr)!r}")
+    if arr.size == 0:
+        raise ValueError(f".npy array is empty (shape={arr.shape})")
+
+    # ---- Shape normalization --------------------------------------------
+    # Squeeze leading singleton batch dimensions like (1, H, W, 3).
+    while arr.ndim == 4 and arr.shape[0] == 1:
+        arr = arr[0]
+
+    if arr.ndim == 2:
+        arr = np.stack([arr, arr, arr], axis=-1)
+    elif arr.ndim == 3:
+        h0, h1, h2 = arr.shape
+        if h2 == 1:
+            arr = np.repeat(arr, 3, axis=2)
+        elif h2 == 3:
+            pass  # already (H, W, 3)
+        elif h2 == 4:
+            arr = arr[:, :, :3]  # drop alpha
+        elif h0 == 3 and h2 != 3:
+            # Channels-first (3, H, W) -> (H, W, 3)
+            arr = np.transpose(arr, (1, 2, 0))
+        elif h0 == 1:
+            arr = np.repeat(np.transpose(arr, (1, 2, 0)), 3, axis=2)
+        else:
+            raise ValueError(
+                f".npy array has unsupported 3D shape {arr.shape}; "
+                "expected (H, W), (H, W, 1), (H, W, 3/4), or (3, H, W)"
+            )
+    else:
+        raise ValueError(
+            f".npy array has unsupported ndim={arr.ndim} (shape={arr.shape}); "
+            "expected 2D grayscale or 3D RGB"
+        )
+
+    # ---- dtype normalization --------------------------------------------
+    if arr.dtype == np.uint8:
+        return np.ascontiguousarray(arr)
+
+    if np.issubdtype(arr.dtype, np.integer):
+        info = np.iinfo(arr.dtype)
+        max_val = max(int(info.max), 1)
+        scaled = arr.astype(np.float32) * (255.0 / max_val)
+        return np.clip(scaled, 0, 255).astype(np.uint8)
+
+    if np.issubdtype(arr.dtype, np.floating):
+        f = np.nan_to_num(arr.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+        peak = float(f.max()) if f.size else 0.0
+        if peak <= 1.001:
+            f = f * 255.0
+        return np.clip(f, 0, 255).astype(np.uint8)
+
+    raise ValueError(f".npy array has unsupported dtype {arr.dtype!r}")
+
+
 def load_raw_image(
     path: str, width: int, height: int, pixel_format: str,
 ) -> np.ndarray:
     """Load a raw/binary file and return an ``(H, W, 3)`` uint8 RGB array.
 
-    Supported pixel formats: ``NV21``, ``GRAY8``, ``RGB888``.
-    Also handles ``.npy`` files (auto-detected from extension).
+    Supported pixel formats: ``NV21``, ``NV12``, ``GRAY8``, ``RGB888``.
+    Also handles ``.npy`` files (auto-detected from extension).  The file
+    extensions ``.nv21`` / ``.nv12`` override the explicit *pixel_format*
+    argument so that callers don't need to repeat themselves.
     """
     ext = Path(path).suffix.lower()
 
     if ext == ".npy":
-        arr = np.load(path)
-        if arr.ndim == 2:
-            # Grayscale → RGB
-            arr = np.stack([arr, arr, arr], axis=-1)
-        if arr.dtype != np.uint8:
-            if arr.max() <= 1.0:
-                arr = (arr * 255).clip(0, 255).astype(np.uint8)
-            else:
-                arr = arr.clip(0, 255).astype(np.uint8)
-        return arr
+        arr = np.load(path, allow_pickle=False)
+        return _npy_array_to_rgb_uint8(arr)
 
     raw_bytes = Path(path).read_bytes()
     fmt = pixel_format.upper()
 
-    if fmt == "NV21" or ext == ".nv21":
+    # Extension-based override: .nv21/.nv12 are unambiguous.
+    if ext == ".nv21":
+        fmt = "NV21"
+    elif ext == ".nv12":
+        fmt = "NV12"
+
+    if fmt == "NV21":
         return _nv21_to_rgb(raw_bytes, width, height)
-    elif fmt == "GRAY8":
+    if fmt == "NV12":
+        return _nv12_to_rgb(raw_bytes, width, height)
+    if fmt == "GRAY8":
         expected = width * height
+        if expected <= 0:
+            raise ValueError(
+                f"GRAY8 requires positive width/height, got {width}x{height}"
+            )
         if len(raw_bytes) < expected:
             raise ValueError(
                 f"GRAY8 data too short: expected {expected} bytes, got {len(raw_bytes)}"
             )
         gray = np.frombuffer(raw_bytes, dtype=np.uint8, count=expected).reshape(height, width)
         return np.stack([gray, gray, gray], axis=-1)
-    elif fmt == "RGB888":
+    if fmt == "RGB888":
         expected = width * height * 3
+        if expected <= 0:
+            raise ValueError(
+                f"RGB888 requires positive width/height, got {width}x{height}"
+            )
         if len(raw_bytes) < expected:
             raise ValueError(
                 f"RGB888 data too short: expected {expected} bytes, got {len(raw_bytes)}"
             )
         return np.frombuffer(raw_bytes, dtype=np.uint8, count=expected).reshape(height, width, 3)
-    else:
-        raise ValueError(f"Unsupported pixel_format: {pixel_format!r}")
+
+    raise ValueError(
+        f"Unsupported pixel_format: {pixel_format!r} (expected one of {_PIXEL_FORMATS})"
+    )
 
 
 def _is_raw_file(path: str) -> bool:
@@ -541,23 +670,28 @@ def run_pipeline(args: argparse.Namespace) -> None:
     print(f"[5/5] Spatial Heuristics  ... done ({dt:.2f}s)")
 
     # ── Aggregation ─────────────────────────────────────────────────
-    # Deep similarity map (higher = more similar)
+    # Deep similarity map (higher = more similar).  Clamp to [0, 1] so the
+    # downstream blur severity (1 - deep_sim) cannot drift outside its
+    # documented range.
     deep_sim = aggregate_deep_score(
         deep_out["l_maps"],
         deep_out["s_maps"],
         deep_out["p_tex"],
         target_size=(H, W),
-    )  # (B, 1, H, W)
+    ).clamp(0.0, 1.0)  # (B, 1, H, W)
 
-    # Normalize anomaly map to [0, 1] per sample
-    anom_flat = anomaly_map.view(B, -1)
-    anom_max = anom_flat.max(dim=1, keepdim=True).values.view(B, 1, 1, 1).clamp(min=1e-12)
-    anomaly_norm = anomaly_map / anom_max
+    # Per-sample normalisation that returns zero for near-identical images
+    # instead of dividing by a tiny clamp (avoids NaN propagation).
+    def _safe_norm(x: torch.Tensor) -> torch.Tensor:
+        flat = x.view(B, -1)
+        peak = flat.max(dim=1, keepdim=True).values  # (B, 1)
+        safe_peak = peak.clamp(min=1e-6).view(B, 1, 1, 1)
+        out = x / safe_peak
+        is_small = (peak < 1e-6).view(B, 1, 1, 1)
+        return torch.where(is_small, torch.zeros_like(out), out)
 
-    # Normalize color map to [0, 1]
-    color_flat = color_map.view(B, -1)
-    color_max = color_flat.max(dim=1, keepdim=True).values.view(B, 1, 1, 1).clamp(min=1e-12)
-    color_norm = color_map / color_max
+    anomaly_norm = _safe_norm(anomaly_map)
+    color_norm = _safe_norm(color_map)
 
     # Heuristic penalty: fraction of pixels flagged
     heur_penalty = (blocking_mask + ringing_mask).clamp(0.0, 1.0).mean(dim=(2, 3))  # (B, 1)
@@ -734,7 +868,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--pixel_format",
         default="RGB888",
-        choices=["NV21", "GRAY8", "RGB888"],
+        choices=list(_PIXEL_FORMATS),
         help="Pixel format of raw inputs (default: RGB888).",
     )
 
