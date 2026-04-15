@@ -152,10 +152,17 @@ class ChromaticTransportEvaluator(nn.Module):
         torch.Tensor
             Approximate EMD per patch ``(P,)``.
         """
-        eps = 1e-8
+        eps = 1e-6
+        # Identify patches with degenerate (all-zero) histograms; we'll zero
+        # out their EMD contribution at the end so they can't poison the
+        # Sinkhorn iteration with NaNs.
+        sum_r = hist_r.sum(dim=-1, keepdim=True)
+        sum_t = hist_t.sum(dim=-1, keepdim=True)
+        empty_mask = (sum_r.squeeze(-1) <= eps) | (sum_t.squeeze(-1) <= eps)  # (P,)
+
         # Normalize histograms to probability distributions
-        hist_r = hist_r / (hist_r.sum(dim=-1, keepdim=True) + eps)
-        hist_t = hist_t / (hist_t.sum(dim=-1, keepdim=True) + eps)
+        hist_r = hist_r / sum_r.clamp(min=eps)
+        hist_t = hist_t / sum_t.clamp(min=eps)
 
         # Ground distance matrix: pairwise L2 in Oklab
         # (N, 3) -> (N, N)
@@ -174,6 +181,11 @@ class ChromaticTransportEvaluator(nn.Module):
         # EMD = sum_ij T_ij * C_ij  for each patch
         T = u.unsqueeze(-1) * K.unsqueeze(0) * v.unsqueeze(-2)  # (P, N, N)
         emd = (T * cost.unsqueeze(0)).sum(dim=(-1, -2))  # (P,)
+        # Sanitise any NaN/Inf produced by extreme degeneracies and force
+        # patches that started with empty histograms to zero EMD.
+        emd = torch.nan_to_num(emd, nan=0.0, posinf=0.0, neginf=0.0)
+        if empty_mask.any():
+            emd = torch.where(empty_mask, torch.zeros_like(emd), emd)
         return emd
 
     # ------------------------------------------------------------------
@@ -221,6 +233,12 @@ class ChromaticTransportEvaluator(nn.Module):
         # Safety margin
         lo = lo - 0.01
         hi = hi + 0.01
+        # If any channel is constant (lo == hi within tolerance) widen the
+        # range so torch.linspace returns a non-degenerate set of edges.
+        for c in range(3):
+            if (hi[c] - lo[c]) < 1e-4:
+                lo[c] = lo[c] - 0.05
+                hi[c] = hi[c] + 0.05
 
         edges = [torch.linspace(lo[c].item(), hi[c].item(), nb + 1, device=oklab.device) for c in range(3)]
         centers = [(edges[c][:-1] + edges[c][1:]) / 2.0 for c in range(3)]

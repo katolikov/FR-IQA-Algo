@@ -322,8 +322,11 @@ class DeepStatisticalExtractor(nn.Module):
             s_map = (2.0 * cov_rt + _C2) / (var_r + var_t + _C2)
 
             # Dispersion index: D = var_r / (mu_r + eps)
-            # Using the L2 pooled means as local mean proxy
-            dispersion = var_r / (mu_r + _EPS)
+            # Using the L2 pooled means as local mean proxy.  Use a slightly
+            # larger denominator epsilon and clamp the result so the sigmoid
+            # cannot saturate to NaN on flat / ultra-low-energy regions.
+            dispersion = var_r / (mu_r + 1e-6)
+            dispersion = dispersion.clamp(min=0.0, max=1e3)
 
             # Texture probability: P_tex = sigmoid(k * (D - b))
             p_tex = torch.sigmoid(

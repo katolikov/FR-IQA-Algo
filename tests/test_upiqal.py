@@ -6,12 +6,21 @@ mocking VGG16 weights.  All tensors use small spatial dimensions for speed.
 
 from __future__ import annotations
 
+import io
 import math
+import sys
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+import numpy as np
 import pytest
 import torch
 import torch.nn as nn
+
+# Make the repo root importable so we can hit upiqal_cli and web/main.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -408,3 +417,390 @@ class TestUPIQALIntegration:
         assert torch.allclose(
             out_batch["score"][0], out_batch["score"][1], atol=1e-4
         ), "Duplicated batch items should have identical scores"
+
+
+# ---------------------------------------------------------------------------
+# Image loading: .npy, RAW, NV21, NV12
+# ---------------------------------------------------------------------------
+
+class TestImageLoading:
+    """Exercise the loaders shared by the CLI and web entry points."""
+
+    # ----- .npy ----------------------------------------------------------
+
+    def _save_npy(self, tmp_path, arr, name="arr.npy"):
+        path = tmp_path / name
+        np.save(path, arr)
+        return str(path)
+
+    def test_npy_uint8_2d_grayscale(self, tmp_path):
+        from upiqal_cli import load_raw_image
+        arr = (np.random.rand(32, 48) * 255).astype(np.uint8)
+        out = load_raw_image(self._save_npy(tmp_path, arr), 0, 0, "RGB888")
+        assert out.shape == (32, 48, 3)
+        assert out.dtype == np.uint8
+        assert np.all(out[..., 0] == arr)
+        assert np.all(out[..., 1] == arr)
+
+    def test_npy_uint8_hwc(self, tmp_path):
+        from upiqal_cli import load_raw_image
+        arr = (np.random.rand(16, 16, 3) * 255).astype(np.uint8)
+        out = load_raw_image(self._save_npy(tmp_path, arr), 0, 0, "RGB888")
+        assert out.shape == (16, 16, 3)
+        assert np.array_equal(out, arr)
+
+    def test_npy_chw_channels_first(self, tmp_path):
+        from upiqal_cli import load_raw_image
+        arr = (np.random.rand(3, 24, 32) * 255).astype(np.uint8)
+        out = load_raw_image(self._save_npy(tmp_path, arr), 0, 0, "RGB888")
+        assert out.shape == (24, 32, 3)
+        assert np.array_equal(out, np.transpose(arr, (1, 2, 0)))
+
+    def test_npy_4d_batch_squeezed(self, tmp_path):
+        from upiqal_cli import load_raw_image
+        arr = (np.random.rand(1, 20, 24, 3) * 255).astype(np.uint8)
+        out = load_raw_image(self._save_npy(tmp_path, arr), 0, 0, "RGB888")
+        assert out.shape == (20, 24, 3)
+        assert np.array_equal(out, arr[0])
+
+    def test_npy_uint16_full_range_scaled(self, tmp_path):
+        from upiqal_cli import load_raw_image
+        # Top half saturated 65535, bottom half 0 -> should land at 255 / 0
+        arr = np.zeros((4, 4), dtype=np.uint16)
+        arr[:2, :] = 65535
+        out = load_raw_image(self._save_npy(tmp_path, arr), 0, 0, "RGB888")
+        assert out.dtype == np.uint8
+        assert out[0, 0, 0] == 255
+        assert out[3, 3, 0] == 0
+
+    def test_npy_float32_unit_range(self, tmp_path):
+        from upiqal_cli import load_raw_image
+        arr = np.linspace(0.0, 1.0, 4 * 4 * 3, dtype=np.float32).reshape(4, 4, 3)
+        out = load_raw_image(self._save_npy(tmp_path, arr), 0, 0, "RGB888")
+        assert out.dtype == np.uint8
+        assert out[0, 0, 0] == 0
+        assert out[3, 3, 2] == 255
+
+    def test_npy_float32_0_255_range(self, tmp_path):
+        from upiqal_cli import load_raw_image
+        arr = np.array([[[10.0, 20.0, 30.0], [200.0, 210.0, 220.0]]], dtype=np.float32)
+        out = load_raw_image(self._save_npy(tmp_path, arr), 0, 0, "RGB888")
+        assert out[0, 0, 0] == 10
+        assert out[0, 1, 2] == 220
+
+    def test_npy_nan_inf_safe(self, tmp_path):
+        from upiqal_cli import load_raw_image
+        arr = np.array([[np.nan, np.inf], [-np.inf, 0.5]], dtype=np.float32)
+        out = load_raw_image(self._save_npy(tmp_path, arr), 0, 0, "RGB888")
+        assert out.dtype == np.uint8
+        assert not np.isnan(out).any()
+
+    def test_npy_unsupported_shape_raises(self, tmp_path):
+        from upiqal_cli import load_raw_image
+        arr = np.zeros((2, 5, 6, 7), dtype=np.uint8)  # 4D non-singleton leading
+        with pytest.raises(ValueError):
+            load_raw_image(self._save_npy(tmp_path, arr), 0, 0, "RGB888")
+
+    # ----- GRAY8 / RGB888 ------------------------------------------------
+
+    def test_gray8_round_trip(self, tmp_path):
+        from upiqal_cli import load_raw_image
+        gray = (np.random.rand(20, 30) * 255).astype(np.uint8)
+        path = tmp_path / "frame.raw"
+        path.write_bytes(gray.tobytes())
+        out = load_raw_image(str(path), 30, 20, "GRAY8")
+        assert out.shape == (20, 30, 3)
+        assert np.array_equal(out[..., 0], gray)
+
+    def test_rgb888_round_trip(self, tmp_path):
+        from upiqal_cli import load_raw_image
+        rgb = (np.random.rand(16, 24, 3) * 255).astype(np.uint8)
+        path = tmp_path / "frame.bin"
+        path.write_bytes(rgb.tobytes())
+        out = load_raw_image(str(path), 24, 16, "RGB888")
+        assert np.array_equal(out, rgb)
+
+    def test_rgb888_truncated_raises(self, tmp_path):
+        from upiqal_cli import load_raw_image
+        path = tmp_path / "short.raw"
+        path.write_bytes(b"\x00" * (16 * 16 * 3 - 5))  # 5 bytes short
+        with pytest.raises(ValueError, match="too short"):
+            load_raw_image(str(path), 16, 16, "RGB888")
+
+    # ----- NV21 / NV12 ---------------------------------------------------
+
+    def _make_yuv420sp(self, y, u_byte, v_byte, chroma_order):
+        """Build a YUV420SP frame with a custom Y plane and uniform U/V."""
+        h, w = y.shape
+        cw, ch = (w + 1) // 2, (h + 1) // 2
+        chroma = np.empty((ch, cw, 2), dtype=np.uint8)
+        if chroma_order == "VU":  # NV21
+            chroma[..., 0] = v_byte
+            chroma[..., 1] = u_byte
+        else:  # NV12
+            chroma[..., 0] = u_byte
+            chroma[..., 1] = v_byte
+        return y.tobytes() + chroma.tobytes()
+
+    def test_nv21_neutral_chroma_recovers_luma(self, tmp_path):
+        from upiqal_cli import load_raw_image
+        y = (np.random.rand(16, 16) * 255).astype(np.uint8)
+        path = tmp_path / "frame.nv21"
+        path.write_bytes(self._make_yuv420sp(y, 128, 128, "VU"))
+        out = load_raw_image(str(path), 16, 16, "NV21")
+        # With neutral U/V (=128), R/G/B should all equal Y exactly
+        assert np.allclose(out[..., 0], y, atol=1)
+        assert np.allclose(out[..., 1], y, atol=1)
+        assert np.allclose(out[..., 2], y, atol=1)
+
+    def test_nv12_neutral_chroma_recovers_luma(self, tmp_path):
+        from upiqal_cli import load_raw_image
+        y = (np.random.rand(16, 16) * 255).astype(np.uint8)
+        path = tmp_path / "frame.nv12"
+        path.write_bytes(self._make_yuv420sp(y, 128, 128, "UV"))
+        out = load_raw_image(str(path), 16, 16, "NV12")
+        assert np.allclose(out[..., 0], y, atol=1)
+        assert np.allclose(out[..., 1], y, atol=1)
+        assert np.allclose(out[..., 2], y, atol=1)
+
+    def test_nv12_red_chroma_differs_from_nv21(self, tmp_path):
+        """An NV12 buffer with U=64, V=200 must NOT decode the same as NV21
+        (which would interpret bytes as V=64, U=200) — proves chroma order
+        is honoured per format."""
+        from upiqal_cli import load_raw_image
+        y = np.full((8, 8), 128, dtype=np.uint8)
+        # NV12 buffer
+        nv12_path = tmp_path / "frame.nv12"
+        nv12_path.write_bytes(self._make_yuv420sp(y, 64, 200, "UV"))
+        nv12_rgb = load_raw_image(str(nv12_path), 8, 8, "NV12")
+        # Same byte stream parsed as NV21 (we lie about extension here)
+        nv21_path = tmp_path / "frame_as_nv21.raw"
+        nv21_path.write_bytes(self._make_yuv420sp(y, 64, 200, "UV"))
+        nv21_rgb = load_raw_image(str(nv21_path), 8, 8, "NV21")
+        assert not np.array_equal(nv12_rgb, nv21_rgb), (
+            "NV12 and NV21 should disagree on chroma ordering"
+        )
+
+    def test_nv12_odd_dimensions(self, tmp_path):
+        from upiqal_cli import load_raw_image
+        w, h = 33, 17
+        y = (np.random.rand(h, w) * 255).astype(np.uint8)
+        path = tmp_path / "odd.nv12"
+        path.write_bytes(self._make_yuv420sp(y, 128, 128, "UV"))
+        out = load_raw_image(str(path), w, h, "NV12")
+        assert out.shape == (h, w, 3)
+
+    def test_extension_overrides_pixel_format(self, tmp_path):
+        """A .nv12 extension should force NV12 even if --pixel_format=NV21."""
+        from upiqal_cli import load_raw_image
+        y = np.full((8, 8), 100, dtype=np.uint8)
+        path = tmp_path / "frame.nv12"
+        path.write_bytes(self._make_yuv420sp(y, 64, 200, "UV"))
+        # Even though caller passes NV21, .nv12 extension wins.
+        out_a = load_raw_image(str(path), 8, 8, "NV21")
+        out_b = load_raw_image(str(path), 8, 8, "NV12")
+        assert np.array_equal(out_a, out_b)
+
+
+# ---------------------------------------------------------------------------
+# CLI end-to-end: full pipeline on PNG and NV12 inputs
+# ---------------------------------------------------------------------------
+
+class TestCLIEndToEnd:
+    @patch("upiqal.features.models.vgg16", side_effect=_mock_vgg16)
+    def test_run_pipeline_png(self, mock_vgg, tmp_path):
+        import upiqal_cli
+        from PIL import Image
+        rng = np.random.default_rng(0)
+        ref = (rng.random((48, 48, 3)) * 255).astype(np.uint8)
+        tgt = np.clip(ref.astype(np.int16) + rng.integers(-10, 10, ref.shape), 0, 255).astype(np.uint8)
+        ref_path = tmp_path / "ref.png"
+        tgt_path = tmp_path / "tgt.png"
+        Image.fromarray(ref).save(ref_path)
+        Image.fromarray(tgt).save(tgt_path)
+        out_dir = tmp_path / "out"
+
+        ns = type("Args", (), {})()
+        ns.reference = str(ref_path)
+        ns.target = str(tgt_path)
+        ns.name = None
+        ns.max_side = 48
+        ns.output_dir = str(out_dir)
+        ns.width = 0
+        ns.height = 0
+        ns.pixel_format = "RGB888"
+        ns.output_format = "png"
+
+        upiqal_cli.run_pipeline(ns)
+
+        report = out_dir / "report.json"
+        assert report.exists()
+        import json
+        data = json.loads(report.read_text())
+        assert "score" in data
+        assert 0.0 <= data["score"] <= 1.0
+        assert (out_dir / "global_anomaly_map.png").exists()
+        assert (out_dir / "anomaly_overlay.png").exists()
+
+    @patch("upiqal.features.models.vgg16", side_effect=_mock_vgg16)
+    def test_run_pipeline_nv12(self, mock_vgg, tmp_path):
+        import upiqal_cli
+        rng = np.random.default_rng(1)
+        w, h = 48, 32
+        for n in ("ref", "tgt"):
+            y = (rng.random((h, w)) * 255).astype(np.uint8)
+            cw, ch = (w + 1) // 2, (h + 1) // 2
+            uv = np.full((ch, cw, 2), 128, dtype=np.uint8)
+            (tmp_path / f"{n}.nv12").write_bytes(y.tobytes() + uv.tobytes())
+        out_dir = tmp_path / "out"
+
+        ns = type("Args", (), {})()
+        ns.reference = str(tmp_path / "ref.nv12")
+        ns.target = str(tmp_path / "tgt.nv12")
+        ns.name = None
+        ns.max_side = 48
+        ns.output_dir = str(out_dir)
+        ns.width = w
+        ns.height = h
+        ns.pixel_format = "NV12"
+        ns.output_format = "png"
+
+        upiqal_cli.run_pipeline(ns)
+
+        report = out_dir / "report.json"
+        assert report.exists()
+        import json
+        data = json.loads(report.read_text())
+        assert 0.0 <= data["score"] <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# Web end-to-end: FastAPI TestClient
+# ---------------------------------------------------------------------------
+
+class TestWebEndToEnd:
+    """Smoke-test the FastAPI ``/api/compare`` endpoint with a mock model."""
+
+    @pytest.fixture
+    def client(self):
+        # Import the app and swap in the lightweight MockUPIQAL so we don't
+        # need real VGG16 weights for the smoke test.
+        from fastapi.testclient import TestClient
+        import importlib
+        web_main = importlib.import_module("web.main")
+        from web.mock_upiqal import MockUPIQAL
+
+        web_main._model = MockUPIQAL().eval()
+        # Silence the lazy loader so it always returns our mock.
+        web_main.get_model = lambda: web_main._model  # type: ignore[assignment]
+        return TestClient(web_main.app)
+
+    def _png_bytes(self, seed):
+        from PIL import Image
+        rng = np.random.default_rng(seed)
+        arr = (rng.random((32, 32, 3)) * 255).astype(np.uint8)
+        buf = io.BytesIO()
+        Image.fromarray(arr).save(buf, format="PNG")
+        return buf.getvalue()
+
+    def test_compare_png(self, client):
+        ref = self._png_bytes(0)
+        tgt = self._png_bytes(1)
+        r = client.post(
+            "/api/compare",
+            files={
+                "reference_image": ("ref.png", ref, "image/png"),
+                "target_image": ("tgt.png", tgt, "image/png"),
+            },
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert "score" in body and 0.0 <= body["score"] <= 1.0
+        assert "heatmaps" in body
+        assert set(body["heatmaps"].keys()) >= {
+            "anomaly", "color", "structure", "blocking", "ringing",
+        }
+
+    def test_compare_npy(self, client):
+        rng = np.random.default_rng(2)
+        ref_arr = (rng.random((32, 32, 3)) * 255).astype(np.uint8)
+        tgt_arr = (rng.random((32, 32, 3)) * 255).astype(np.uint8)
+        ref_buf = io.BytesIO(); np.save(ref_buf, ref_arr)
+        tgt_buf = io.BytesIO(); np.save(tgt_buf, tgt_arr)
+        r = client.post(
+            "/api/compare",
+            files={
+                "reference_image": ("ref.npy", ref_buf.getvalue(), "application/octet-stream"),
+                "target_image": ("tgt.npy", tgt_buf.getvalue(), "application/octet-stream"),
+            },
+        )
+        assert r.status_code == 200, r.text
+        assert 0.0 <= r.json()["score"] <= 1.0
+
+    def test_compare_nv12(self, client):
+        rng = np.random.default_rng(3)
+        w, h = 32, 32
+        ref_y = (rng.random((h, w)) * 255).astype(np.uint8)
+        tgt_y = (rng.random((h, w)) * 255).astype(np.uint8)
+        cw, ch = (w + 1) // 2, (h + 1) // 2
+        uv = np.full((ch, cw, 2), 128, dtype=np.uint8)
+        ref_bytes = ref_y.tobytes() + uv.tobytes()
+        tgt_bytes = tgt_y.tobytes() + uv.tobytes()
+        r = client.post(
+            "/api/compare",
+            data={"width": w, "height": h, "pixel_format": "NV12"},
+            files={
+                "reference_image": ("ref.nv12", ref_bytes, "application/octet-stream"),
+                "target_image": ("tgt.nv12", tgt_bytes, "application/octet-stream"),
+            },
+        )
+        assert r.status_code == 200, r.text
+        assert 0.0 <= r.json()["score"] <= 1.0
+
+
+# ---------------------------------------------------------------------------
+# Numerical-stability regression tests
+# ---------------------------------------------------------------------------
+
+class TestNumericalStability:
+    """Pin down the stability fixes so they don't regress."""
+
+    @patch("upiqal.features.models.vgg16", side_effect=_mock_vgg16)
+    def test_identical_images_no_nan(self, mock_vgg):
+        from upiqal.model import UPIQAL
+        torch.manual_seed(0)
+        img = torch.rand(1, 3, 64, 64)
+        model = UPIQAL(pretrained_vgg=False, color_patch_size=16, sinkhorn_iters=5)
+        model.eval()
+        out = model(img, img.clone())
+        assert not torch.isnan(out["score"]).any()
+        assert not torch.isnan(out["diagnostic_tensor"]).any()
+        assert not torch.isinf(out["diagnostic_tensor"]).any()
+        # The anomaly channel comes from residuals = phi_r - phi_t which is
+        # identically zero for identical inputs, so the safe normaliser must
+        # keep it at zero (the old code blew this up to ~1e12 / NaN).
+        assert out["diagnostic_tensor"][:, 0].max().item() < 1e-3
+
+    @patch("upiqal.features.models.vgg16", side_effect=_mock_vgg16)
+    def test_uniform_constant_images_no_nan(self, mock_vgg):
+        from upiqal.model import UPIQAL
+        ref = torch.full((1, 3, 64, 64), 0.3)
+        tgt = torch.full((1, 3, 64, 64), 0.3)
+        model = UPIQAL(pretrained_vgg=False, color_patch_size=16, sinkhorn_iters=5)
+        model.eval()
+        out = model(ref, tgt)
+        assert not torch.isnan(out["score"]).any()
+        assert not torch.isnan(out["diagnostic_tensor"]).any()
+
+    @patch("upiqal.features.models.vgg16", side_effect=_mock_vgg16)
+    def test_deep_sim_clamped_to_unit_interval(self, mock_vgg):
+        from upiqal.model import UPIQAL
+        torch.manual_seed(1)
+        ref = torch.rand(1, 3, 64, 64)
+        tgt = torch.rand(1, 3, 64, 64)  # totally different image
+        model = UPIQAL(pretrained_vgg=False, color_patch_size=16, sinkhorn_iters=5)
+        model.eval()
+        out = model(ref, tgt)
+        deep_sim = out["diagnostic_tensor"][:, 2]
+        assert deep_sim.min().item() >= 0.0 - 1e-6
+        assert deep_sim.max().item() <= 1.0 + 1e-6

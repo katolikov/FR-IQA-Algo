@@ -20,6 +20,22 @@ from upiqal.uncertainty import ProbabilisticUncertaintyMapper
 from upiqal.heuristics import SpatialHeuristicsEngine
 
 
+def _safe_per_sample_normalize(x: torch.Tensor) -> torch.Tensor:
+    """Scale a ``(B, 1, H, W)`` map to ``[0, 1]`` per sample.
+
+    Returns an all-zero tensor for samples whose maximum is below ``1e-6``
+    so identical / near-identical inputs cannot trigger pathological
+    division by a near-zero peak.
+    """
+    B = x.shape[0]
+    flat = x.view(B, -1)
+    peak = flat.max(dim=1, keepdim=True).values  # (B, 1)
+    safe_peak = peak.clamp(min=1e-6).view(B, 1, 1, 1)
+    out = x / safe_peak
+    is_small = (peak < 1e-6).view(B, 1, 1, 1)
+    return torch.where(is_small, torch.zeros_like(out), out)
+
+
 class UPIQAL(nn.Module):
     """Unified Probabilistic Image Quality and Artifact Locator.
 
@@ -203,23 +219,25 @@ class UPIQAL(nn.Module):
         ringing_mask = heur["ringing_mask"]  # (B,1,H,W)
 
         # ---- Aggregation ----
-        # Deep similarity map (higher = more similar)
+        # Deep similarity map (higher = more similar).  Clamp to [0, 1] so
+        # downstream consumers (diagnostics, blur severity = 1 - deep_sim)
+        # cannot drift outside the documented range when l/s maps go slightly
+        # negative for low-contrast / mismatched-statistics regions.
         deep_sim = self._aggregate_deep_score(
             deep_out["l_maps"],
             deep_out["s_maps"],
             deep_out["p_tex"],
             target_size=(H, W),
-        )  # (B,1,H,W)
+        ).clamp(0.0, 1.0)  # (B,1,H,W)
 
-        # Normalize anomaly map to [0,1] per sample
-        anom_flat = anomaly_map.view(B, -1)
-        anom_max = anom_flat.max(dim=1, keepdim=True).values.view(B, 1, 1, 1).clamp(min=1e-12)
-        anomaly_norm = anomaly_map / anom_max
+        # Normalize anomaly map to [0, 1] per sample.  When the per-sample
+        # peak is essentially zero (identical/near-identical images) we emit
+        # an all-zero map instead of dividing by a tiny clamp, which used to
+        # blow up to ~1e12 and propagate NaNs through the diagnostics.
+        anomaly_norm = _safe_per_sample_normalize(anomaly_map)
 
-        # Normalize color map to [0,1]
-        color_flat = color_map.view(B, -1)
-        color_max = color_flat.max(dim=1, keepdim=True).values.view(B, 1, 1, 1).clamp(min=1e-12)
-        color_norm = color_map / color_max
+        # Normalize color map to [0, 1] using the same safe path.
+        color_norm = _safe_per_sample_normalize(color_map)
 
         # Heuristic penalty: fraction of pixels flagged
         heur_penalty = (blocking_mask + ringing_mask).clamp(0.0, 1.0).mean(dim=(2, 3))  # (B,1)
