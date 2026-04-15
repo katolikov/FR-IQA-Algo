@@ -249,23 +249,23 @@ class GibbsRingingDetector(nn.Module):
         total = mask.sum(dim=(2, 3)).clamp(min=1.0)
         return local_var.sum(dim=(2, 3)) / total  # (B, 1)
 
-    def forward(self, tgt: torch.Tensor) -> torch.Tensor:
-        """Compute the Gibbs ringing mask.
+    def _compute_ringing_mask(self, img: torch.Tensor) -> torch.Tensor:
+        """Compute ringing mask for a single image.
 
         Parameters
         ----------
-        tgt : torch.Tensor
-            Target image ``(B, 3, H, W)`` or ``(B, 1, H, W)``.
+        img : torch.Tensor
+            Image ``(B, 3, H, W)`` or ``(B, 1, H, W)``.
 
         Returns
         -------
         torch.Tensor
             Binary ringing mask ``(B, 1, H, W)``.
         """
-        if tgt.shape[1] == 3:
-            lum = self._rgb_to_luminance(tgt)
+        if img.shape[1] == 3:
+            lum = self._rgb_to_luminance(img)
         else:
-            lum = tgt
+            lum = img
 
         # 1. Sobel edge detection
         grad_mag = self._sobel_edge(lum)
@@ -291,6 +291,29 @@ class GibbsRingingDetector(nn.Module):
         is_ringing = (ratio > self.variance_ratio_threshold).float()  # (B, 1)
         ringing_mask = M_prox * is_ringing.unsqueeze(-1).unsqueeze(-1)
         return ringing_mask
+
+    def forward(self, ref: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
+        """Compute differential Gibbs ringing mask.
+
+        Computes ringing for both reference and target independently,
+        then returns only the excess ringing in the target (artifacts
+        introduced by degradation, not inherent image structure).
+
+        Parameters
+        ----------
+        ref : torch.Tensor
+            Reference image ``(B, 3, H, W)`` or ``(B, 1, H, W)``.
+        tgt : torch.Tensor
+            Target image ``(B, 3, H, W)`` or ``(B, 1, H, W)``.
+
+        Returns
+        -------
+        torch.Tensor
+            Differential ringing mask ``(B, 1, H, W)``.
+        """
+        ringing_ref = self._compute_ringing_mask(ref)
+        ringing_tgt = self._compute_ringing_mask(tgt)
+        return (ringing_tgt - ringing_ref).clamp(min=0.0)
 
 
 # ======================================================================
@@ -330,12 +353,14 @@ class SpatialHeuristicsEngine(nn.Module):
         )
 
     def forward(
-        self, tgt: torch.Tensor
+        self, ref: torch.Tensor, tgt: torch.Tensor
     ) -> dict[str, torch.Tensor]:
         """Run both artifact detectors.
 
         Parameters
         ----------
+        ref : torch.Tensor
+            Reference image ``(B, 3, H, W)`` in ``[0, 1]``.
         tgt : torch.Tensor
             Target image ``(B, 3, H, W)`` in ``[0, 1]``.
 
@@ -346,5 +371,5 @@ class SpatialHeuristicsEngine(nn.Module):
         """
         return {
             "blocking_mask": self.blocking(tgt),
-            "ringing_mask": self.ringing(tgt),
+            "ringing_mask": self.ringing(ref, tgt),
         }

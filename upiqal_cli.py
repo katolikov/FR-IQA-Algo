@@ -526,7 +526,10 @@ def compute_diagnostics(
 
     # Dominant artifact is the one with the highest severity
     dominant_key = max(severity_scores, key=severity_scores.get)
-    dominant_artifact = _ARTIFACT_LABELS[dominant_key]
+    if severity_scores[dominant_key] == 0.0:
+        dominant_artifact = "None"
+    else:
+        dominant_artifact = _ARTIFACT_LABELS[dominant_key]
 
     # Affected area: percentage of pixels where anomaly exceeds threshold
     affected_mask = (anomaly_norm > 0.15).float()
@@ -618,6 +621,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
     w_anomaly = 0.3
     w_structure = 0.5
     w_heuristic = 0.1
+    score_scale = 10.0
+    score_center = 0.2
 
     # ── Create output directory (deferred until modules are ready) ──
     if args.output_dir:
@@ -642,7 +647,12 @@ def run_pipeline(args: argparse.Namespace) -> None:
     # ── Module 2: Chromatic Transport ───────────────────────────────
     t0 = time.perf_counter()
     with torch.no_grad():
-        color_map = chromatic(ref_raw, tgt_raw)  # (B, 1, H, W)
+        color_map_raw = chromatic(ref_raw, tgt_raw)  # (B, 1, H, W)
+        # Subtract self-transport baseline: Sinkhorn regularization produces
+        # non-zero EMD even for identical distributions.  Subtracting the
+        # reference self-EMD removes this bias.
+        color_baseline = chromatic(ref_raw, ref_raw)  # (B, 1, H, W)
+        color_map = (color_map_raw - color_baseline).clamp(min=0.0)
     dt = time.perf_counter() - t0
     print(f"[2/5] Chromatic Transport ... done ({dt:.2f}s)")
 
@@ -663,7 +673,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
     # ── Module 5: Spatial Heuristics ────────────────────────────────
     t0 = time.perf_counter()
     with torch.no_grad():
-        heur = heuristics(tgt_raw)
+        heur = heuristics(ref_raw, tgt_raw)
     blocking_mask = heur["blocking_mask"]  # (B, 1, H, W)
     ringing_mask = heur["ringing_mask"]    # (B, 1, H, W)
     dt = time.perf_counter() - t0
@@ -685,9 +695,9 @@ def run_pipeline(args: argparse.Namespace) -> None:
     def _safe_norm(x: torch.Tensor) -> torch.Tensor:
         flat = x.view(B, -1)
         peak = flat.max(dim=1, keepdim=True).values  # (B, 1)
-        safe_peak = peak.clamp(min=1e-6).view(B, 1, 1, 1)
+        safe_peak = peak.clamp(min=1e-3).view(B, 1, 1, 1)
         out = x / safe_peak
-        is_small = (peak < 1e-6).view(B, 1, 1, 1)
+        is_small = (peak < 1e-3).view(B, 1, 1, 1)
         return torch.where(is_small, torch.zeros_like(out), out)
 
     anomaly_norm = _safe_norm(anomaly_map)
@@ -703,7 +713,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
         - w_color * color_norm
     )
     score_per_pixel = score_spatial.mean(dim=(2, 3))  # (B, 1)
-    final_score_tensor = score_per_pixel - w_heuristic * heur_penalty
+    final_score_tensor = score_scale * (score_per_pixel - score_center) - w_heuristic * heur_penalty
     final_score_tensor = torch.sigmoid(final_score_tensor).squeeze(1)  # (B,)
     final_score = round(float(final_score_tensor[0].item()), 4)
 
