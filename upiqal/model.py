@@ -23,16 +23,18 @@ from upiqal.heuristics import SpatialHeuristicsEngine
 def _safe_per_sample_normalize(x: torch.Tensor) -> torch.Tensor:
     """Scale a ``(B, 1, H, W)`` map to ``[0, 1]`` per sample.
 
-    Returns an all-zero tensor for samples whose maximum is below ``1e-6``
+    Returns an all-zero tensor for samples whose maximum is below ``1e-3``
     so identical / near-identical inputs cannot trigger pathological
-    division by a near-zero peak.
+    division by a near-zero peak.  The threshold (1e-3) is large enough
+    to absorb MPS / float32 numerical drift that otherwise let 1e-4-scale
+    Sinkhorn / EMD noise get amplified to full saturation.
     """
     B = x.shape[0]
     flat = x.view(B, -1)
     peak = flat.max(dim=1, keepdim=True).values  # (B, 1)
-    safe_peak = peak.clamp(min=1e-6).view(B, 1, 1, 1)
+    safe_peak = peak.clamp(min=1e-3).view(B, 1, 1, 1)
     out = x / safe_peak
-    is_small = (peak < 1e-6).view(B, 1, 1, 1)
+    is_small = (peak < 1e-3).view(B, 1, 1, 1)
     return torch.where(is_small, torch.zeros_like(out), out)
 
 
@@ -83,6 +85,8 @@ class UPIQAL(nn.Module):
         w_anomaly: float = 0.3,
         w_structure: float = 0.5,
         w_heuristic: float = 0.1,
+        score_scale: float = 10.0,
+        score_center: float = 0.2,
         vgg_weights_path: Union[str, Path, None] = None,
     ) -> None:
         super().__init__()
@@ -94,6 +98,11 @@ class UPIQAL(nn.Module):
         self.w_anomaly = w_anomaly
         self.w_structure = w_structure
         self.w_heuristic = w_heuristic
+        # Score calibration (matches upiqal_cli.run_pipeline): without the
+        # scale/center, identity inputs map to sigmoid(0.5) ≈ 0.62 instead of
+        # the expected 0.9526 upper bound.
+        self.score_scale = score_scale
+        self.score_center = score_center
 
         # Sub-modules
         self.normalizer = Normalizer(mode=norm_mode)
@@ -203,7 +212,13 @@ class UPIQAL(nn.Module):
         ref_norm, tgt_norm = self.normalizer(ref, tgt)
 
         # ---- Module 2: Chromatic Transport (on raw [0,1] images) ----
-        color_map = self.chromatic(ref_raw, tgt_raw)  # (B,1,H,W)
+        # Subtract the self-transport baseline: Sinkhorn regularisation
+        # produces non-zero EMD even for identical distributions, and on
+        # identity that residual peak feeds _safe_per_sample_normalize and
+        # inflates color_shift to 100%.  Matches upiqal_cli.run_pipeline.
+        color_map_raw = self.chromatic(ref_raw, tgt_raw)   # (B,1,H,W)
+        color_baseline = self.chromatic(ref_raw, ref_raw)  # (B,1,H,W)
+        color_map = (color_map_raw - color_baseline).clamp(min=0.0)
 
         # ---- Module 3: Deep Statistics ----
         deep_out = self.deep_stats(ref_norm, tgt_norm)
@@ -214,7 +229,10 @@ class UPIQAL(nn.Module):
         )  # (B,1,H,W)
 
         # ---- Module 5: Spatial Heuristics (on raw images) ----
-        heur = self.heuristics(tgt_raw)
+        # Differential detectors need both ref and tgt: blocking uses the
+        # ref modulo-8 grid energy as a baseline; ringing compares variance
+        # excess near edges in both images.
+        heur = self.heuristics(ref_raw, tgt_raw)
         blocking_mask = heur["blocking_mask"]  # (B,1,H,W)
         ringing_mask = heur["ringing_mask"]  # (B,1,H,W)
 
@@ -250,7 +268,10 @@ class UPIQAL(nn.Module):
             - self.w_color * color_norm
         )
         score_per_pixel = score_spatial.mean(dim=(2, 3))  # (B,1)
-        score = score_per_pixel - self.w_heuristic * heur_penalty
+        score = (
+            self.score_scale * (score_per_pixel - self.score_center)
+            - self.w_heuristic * heur_penalty
+        )
         # Clamp and shift to [0,1]
         score = torch.sigmoid(score).squeeze(1)  # (B,)
 

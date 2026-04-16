@@ -460,10 +460,10 @@ def aggregate_deep_score(
 
 
 # ======================================================================
-# Diagnostics computation (mirrors web/mock_upiqal.py:111-142)
+# Diagnostics computation — shared with web/main.py:compute_diagnostics
 # ======================================================================
 
-# Severity display multipliers (from mock_upiqal.py)
+# Severity display multipliers
 _SEVERITY_MULTIPLIERS = {
     "blocking": 5.0,
     "ringing": 5.0,
@@ -621,8 +621,16 @@ def compute_diagnostics(
             if color_sev >= 25.0:
                 contrib["blur"] *= 0.3
 
-    # Guard: if all contributions are negligible, report "None"
-    if max(contrib.values()) < 0.5:  # 0.5 "severity points" ≈ baseline noise
+    # Guard: if all contributions are negligible, report "None".
+    # MPS / float32 drift can leave a single channel mildly non-zero on
+    # near-identical inputs (e.g. deep_sim ≈ 0.88 → blur_sev ≈ 12%).
+    # Treat that as device noise, not a real artifact.
+    nonzero = {k: v for k, v in severity_scores.items() if v > 0.5}
+    single_weak = (
+        len(nonzero) == 1
+        and next(iter(nonzero.values())) < 15.0
+    )
+    if max(contrib.values()) < 0.5 or single_weak:
         dominant_artifact = "None"
     else:
         dominant_key = max(contrib, key=contrib.get)

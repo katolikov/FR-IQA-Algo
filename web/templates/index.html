@@ -4,149 +4,290 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>UPIQAL - Image Quality Analyzer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
+    // Samsung-inspired monochrome palette.
+    // `brand` = pure white (for dark background accents).
+    // `ink` = near-black scale. `paper` = near-white scale.
     tailwind.config = {
       theme: {
         extend: {
           colors: {
-            brand: { 50: '#eef2ff', 100: '#e0e7ff', 400: '#818cf8', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca', 900: '#312e81' },
-          }
+            brand: { 50: '#ffffff', 100: '#f5f5f5', 400: '#d4d4d4', 500: '#ffffff', 600: '#e5e5e5', 700: '#a3a3a3', 900: '#0a0a0a' },
+            ink:   { 50: '#fafafa', 100: '#f4f4f5', 200: '#e4e4e7', 300: '#d4d4d8', 400: '#a1a1aa', 500: '#71717a', 600: '#52525b', 700: '#3f3f46', 800: '#27272a', 900: '#18181b', 950: '#09090b' },
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif'],
+          },
+          borderRadius: {
+            '4xl': '2rem',
+          },
         }
       }
     }
   </script>
   <style>
-    .drop-zone.dragover { @apply ring-4 ring-brand-500/50 bg-brand-50; }
-    @keyframes gauge-fill { from { width: 0%; } }
-    .gauge-bar { animation: gauge-fill 0.8s ease-out; }
-    @keyframes fade-up { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
-    .fade-up { animation: fade-up 0.5s ease-out both; }
-    @keyframes bar-grow { from { width: 0%; } }
-    .severity-bar { animation: bar-grow 0.6s ease-out both; }
-    .hm-thumb { @apply cursor-pointer rounded-lg border-2 border-transparent transition-all duration-200; }
-    .hm-thumb:hover { @apply border-brand-400 shadow-lg shadow-brand-500/20; }
-    .hm-thumb.active { @apply border-brand-500 ring-2 ring-brand-500/30; }
+    :root {
+      --accent:       #ffffff;  /* primary action (on dark bg) */
+      --accent-soft:  #e4e4e7;
+      --text-primary: #fafafa;
+      --text-muted:   #a1a1aa;
+      --surface-0:    #09090b;  /* page background */
+      --surface-1:    #18181b;  /* card */
+      --surface-2:    #27272a;  /* raised card */
+      --hairline:     #27272a;
+      --hairline-strong: #3f3f46;
+      --shadow:       0 8px 32px rgba(0, 0, 0, 0.45);
+    }
 
-    /* Interactive viewer canvas cursor styles */
+    html, body { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    body { letter-spacing: -0.01em; }
+
+    /* Upload drop zones — subtle until hovered/dragged */
+    .drop-zone {
+      border-color: var(--hairline-strong);
+      transition: all .2s ease;
+    }
+    .drop-zone:hover { border-color: var(--accent); background: #111114; }
+    .drop-zone.dragover {
+      border-color: var(--accent);
+      background: #1c1c21;
+      box-shadow: 0 0 0 4px rgba(255, 255, 255, .06);
+    }
+
+    /* Fade-in + bar-grow animations */
+    @keyframes gauge-fill { from { width: 0%; } }
+    .gauge-bar { animation: gauge-fill 0.8s cubic-bezier(0.16, 1, 0.3, 1); }
+    @keyframes fade-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    .fade-up { animation: fade-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both; }
+    @keyframes bar-grow { from { width: 0%; } }
+    .severity-bar { animation: bar-grow 0.7s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+    /* Heatmap thumbnails */
+    .hm-thumb {
+      cursor: pointer;
+      border-radius: 14px;
+      border: 2px solid transparent;
+      transition: all .2s ease;
+    }
+    .hm-thumb:hover {
+      border-color: var(--accent-soft);
+      transform: translateY(-1px);
+    }
+    .hm-thumb.active {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(255, 255, 255, .1);
+    }
+
+    /* Interactive viewer canvas cursor states */
     #viewer-canvas { cursor: grab; }
     #viewer-canvas.grabbing { cursor: grabbing; }
 
     /* Download button on gallery thumbnails */
-    .hm-download {
-      opacity: 0;
-      transition: opacity 0.15s ease;
-    }
+    .hm-download { opacity: 0; transition: opacity .15s ease; }
     .hm-thumb:hover .hm-download { opacity: 1; }
 
-    /* Custom range slider styling for dark theme */
+    /* Samsung-style range slider (monochrome, generous thumb) */
     #opacity-slider {
-      -webkit-appearance: none;
-      appearance: none;
-      height: 6px;
+      -webkit-appearance: none; appearance: none;
+      height: 4px;
       border-radius: 9999px;
-      background: #374151;
+      background: var(--hairline-strong);
       outline: none;
     }
     #opacity-slider::-webkit-slider-thumb {
-      -webkit-appearance: none;
-      appearance: none;
-      width: 18px;
-      height: 18px;
+      -webkit-appearance: none; appearance: none;
+      width: 20px; height: 20px;
       border-radius: 50%;
-      background: #6366f1;
+      background: var(--accent);
+      border: 3px solid var(--surface-0);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, .4);
       cursor: pointer;
-      border: 2px solid #312e81;
-      transition: transform 0.1s ease;
+      transition: transform .12s ease;
     }
-    #opacity-slider::-webkit-slider-thumb:hover {
-      transform: scale(1.2);
-    }
+    #opacity-slider::-webkit-slider-thumb:hover { transform: scale(1.15); }
+    #opacity-slider::-webkit-slider-thumb:active { transform: scale(1.05); }
     #opacity-slider::-moz-range-thumb {
-      width: 18px;
-      height: 18px;
+      width: 20px; height: 20px;
       border-radius: 50%;
-      background: #6366f1;
+      background: var(--accent);
+      border: 3px solid var(--surface-0);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, .4);
       cursor: pointer;
-      border: 2px solid #312e81;
     }
 
-    /* Zoom badge fade-out animation */
+    /* Zoom badge fade */
     .zoom-badge-hidden { opacity: 0; transition: opacity 0.4s ease; }
     .zoom-badge-visible { opacity: 1; transition: opacity 0.1s ease; }
+
+    /* Primary CTA — pure white pill on dark background */
+    .btn-primary {
+      background: var(--accent);
+      color: #000;
+      transition: all .15s ease;
+    }
+    .btn-primary:hover:not(:disabled) {
+      background: #fff;
+      transform: translateY(-1px);
+      box-shadow: 0 10px 24px rgba(255, 255, 255, .12);
+    }
+    .btn-primary:active:not(:disabled) { transform: translateY(0); }
+    .btn-primary:disabled {
+      background: var(--hairline-strong);
+      color: var(--text-muted);
+      cursor: not-allowed;
+    }
+
+    /* Secondary pill button */
+    .btn-secondary {
+      background: var(--surface-1);
+      color: var(--text-primary);
+      border: 1px solid var(--hairline-strong);
+      transition: all .15s ease;
+    }
+    .btn-secondary:hover {
+      background: var(--surface-2);
+      border-color: #52525b;
+    }
+
+    /* Cards — generous rounding, 1px hairline */
+    .card {
+      background: var(--surface-1);
+      border: 1px solid var(--hairline);
+      border-radius: 24px;
+    }
+    .card-inset {
+      background: var(--surface-0);
+      border: 1px solid var(--hairline);
+      border-radius: 16px;
+    }
+
+    /* Typography */
+    .eyebrow {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+    }
+
+    /* Metric chip — small high-contrast pill for labels */
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      background: var(--surface-2);
+      color: var(--text-primary);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+    }
+
+    /* Subtle grid separator */
+    .hairline { border-color: var(--hairline); }
+
+    /* Smooth scroll-in animations for the whole results section */
+    .fade-up-delayed { animation-delay: .1s; }
   </style>
 </head>
 
-<body class="min-h-screen bg-gray-950 text-gray-100 antialiased">
+<body class="min-h-screen antialiased" style="background: var(--surface-0); color: var(--text-primary);">
 
   <!-- ================================================================= -->
   <!-- HEADER                                                            -->
   <!-- ================================================================= -->
-  <header class="sticky top-0 z-50 border-b border-gray-800 bg-gray-950/80 backdrop-blur-md">
-    <div class="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+  <header class="sticky top-0 z-50 backdrop-blur-xl"
+          style="background: rgba(9, 9, 11, 0.72); border-bottom: 1px solid var(--hairline);">
+    <div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
       <div class="flex items-center gap-3">
-        <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 font-bold text-white text-sm">U</div>
+        <div class="flex h-10 w-10 items-center justify-center rounded-2xl"
+             style="background: var(--accent); color: #000; font-weight: 800; font-size: 15px; letter-spacing: -0.02em;">U</div>
         <div>
-          <h1 class="text-lg font-semibold tracking-tight">UPIQAL</h1>
-          <p class="text-xs text-gray-400">Unified Probabilistic Image Quality &amp; Artifact Locator</p>
+          <h1 class="text-base font-bold tracking-tight">UPIQAL</h1>
+          <p class="text-[11px]" style="color: var(--text-muted); letter-spacing: 0.01em;">Image Quality &amp; Artifact Locator</p>
         </div>
       </div>
-      <span class="hidden sm:block rounded-full bg-gray-800 px-3 py-1 text-xs text-gray-400">FR-IQA v0.2</span>
+      <span class="hidden sm:block chip">FR-IQA · v0.3</span>
     </div>
   </header>
 
-  <main class="mx-auto max-w-7xl px-6 py-10 space-y-12">
+  <main class="mx-auto max-w-6xl px-6 py-12 space-y-16">
 
     <!-- ================================================================= -->
     <!-- UPLOAD SECTION                                                    -->
     <!-- ================================================================= -->
     <section>
-      <h2 class="mb-6 text-center text-2xl font-semibold">Upload Images for Comparison</h2>
+      <div class="mb-10 text-center">
+        <p class="eyebrow mb-3">Step 01</p>
+        <h2 class="text-3xl font-bold tracking-tight mb-2">Compare two images</h2>
+        <p class="text-sm" style="color: var(--text-muted);">Upload a reference and a target. Analysis runs locally on the server.</p>
+      </div>
 
-      <div class="grid gap-6 sm:grid-cols-2">
+      <div class="grid gap-6 md:grid-cols-2">
         <!-- Reference -->
         <div>
-          <label class="mb-2 block text-sm font-medium text-gray-300">Reference Image</label>
+          <div class="mb-3 flex items-center justify-between">
+            <label class="text-xs font-semibold" style="letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted);">Reference</label>
+            <span class="chip" style="font-size: 10px;">Required</span>
+          </div>
           <div id="drop-ref"
-               class="drop-zone relative flex h-56 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-700 bg-gray-900 transition hover:border-brand-500">
+               class="drop-zone relative flex h-60 cursor-pointer flex-col items-center justify-center rounded-3xl border-2 border-dashed"
+               style="background: var(--surface-1);">
             <input id="input-ref" type="file" accept="image/*,.raw,.bin,.nv21,.npy" class="absolute inset-0 cursor-pointer opacity-0" />
-            <svg class="mb-2 h-8 w-8 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 16V4m0 0L8 8m4-4l4 4M4 20h16"/></svg>
-            <p class="text-sm text-gray-400">Drag &amp; drop or <span class="text-brand-500 underline">browse</span></p>
-            <img id="preview-ref" class="absolute inset-0 hidden h-full w-full rounded-xl object-contain p-2" alt="Reference preview" />
+            <svg class="mb-3 h-10 w-10" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="color: var(--text-muted); stroke-width: 1.25;">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 16V4m0 0L8 8m4-4l4 4M4 20h16"/>
+            </svg>
+            <p class="text-sm font-medium" style="color: var(--text-primary);">Drop file or <span class="underline underline-offset-4">browse</span></p>
+            <p class="mt-1 text-[11px]" style="color: var(--text-muted);">PNG · JPEG · RAW · NV21 · NPY</p>
+            <img id="preview-ref" class="absolute inset-0 hidden h-full w-full rounded-3xl object-contain p-3" alt="Reference preview" />
           </div>
         </div>
 
         <!-- Target -->
         <div>
-          <label class="mb-2 block text-sm font-medium text-gray-300">Target / Distorted Image</label>
+          <div class="mb-3 flex items-center justify-between">
+            <label class="text-xs font-semibold" style="letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted);">Target</label>
+            <span class="chip" style="font-size: 10px;">Required</span>
+          </div>
           <div id="drop-tgt"
-               class="drop-zone relative flex h-56 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-700 bg-gray-900 transition hover:border-brand-500">
+               class="drop-zone relative flex h-60 cursor-pointer flex-col items-center justify-center rounded-3xl border-2 border-dashed"
+               style="background: var(--surface-1);">
             <input id="input-tgt" type="file" accept="image/*,.raw,.bin,.nv21,.npy" class="absolute inset-0 cursor-pointer opacity-0" />
-            <svg class="mb-2 h-8 w-8 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 16V4m0 0L8 8m4-4l4 4M4 20h16"/></svg>
-            <p class="text-sm text-gray-400">Drag &amp; drop or <span class="text-brand-500 underline">browse</span></p>
-            <img id="preview-tgt" class="absolute inset-0 hidden h-full w-full rounded-xl object-contain p-2" alt="Target preview" />
+            <svg class="mb-3 h-10 w-10" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="color: var(--text-muted); stroke-width: 1.25;">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 16V4m0 0L8 8m4-4l4 4M4 20h16"/>
+            </svg>
+            <p class="text-sm font-medium" style="color: var(--text-primary);">Drop file or <span class="underline underline-offset-4">browse</span></p>
+            <p class="mt-1 text-[11px]" style="color: var(--text-muted);">PNG · JPEG · RAW · NV21 · NPY</p>
+            <img id="preview-tgt" class="absolute inset-0 hidden h-full w-full rounded-3xl object-contain p-3" alt="Target preview" />
           </div>
         </div>
       </div>
 
       <!-- Raw format options (shown when raw/binary files are selected) -->
-      <div id="raw-options" class="mt-6 hidden rounded-xl border border-gray-700 bg-gray-900 p-5">
-        <p class="mb-3 text-sm font-medium text-gray-300">Raw / Binary Input Settings</p>
+      <div id="raw-options" class="mt-8 hidden card p-6">
+        <p class="mb-4 text-sm font-semibold">Raw / Binary input settings</p>
         <div class="grid gap-4 sm:grid-cols-3">
           <div>
-            <label for="raw-width" class="mb-1 block text-xs text-gray-400">Width (px)</label>
+            <label for="raw-width" class="mb-2 block text-[11px] font-medium" style="color: var(--text-muted); letter-spacing: 0.04em;">WIDTH (PX)</label>
             <input id="raw-width" type="number" min="1" placeholder="640"
-                   class="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-brand-500 focus:outline-none" />
+                   class="w-full rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2"
+                   style="background: var(--surface-0); border: 1px solid var(--hairline-strong); color: var(--text-primary);" />
           </div>
           <div>
-            <label for="raw-height" class="mb-1 block text-xs text-gray-400">Height (px)</label>
+            <label for="raw-height" class="mb-2 block text-[11px] font-medium" style="color: var(--text-muted); letter-spacing: 0.04em;">HEIGHT (PX)</label>
             <input id="raw-height" type="number" min="1" placeholder="480"
-                   class="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 placeholder-gray-500 focus:border-brand-500 focus:outline-none" />
+                   class="w-full rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2"
+                   style="background: var(--surface-0); border: 1px solid var(--hairline-strong); color: var(--text-primary);" />
           </div>
           <div>
-            <label for="raw-pixel-format" class="mb-1 block text-xs text-gray-400">Pixel Format</label>
+            <label for="raw-pixel-format" class="mb-2 block text-[11px] font-medium" style="color: var(--text-muted); letter-spacing: 0.04em;">PIXEL FORMAT</label>
             <select id="raw-pixel-format"
-                    class="w-full rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 focus:border-brand-500 focus:outline-none">
+                    class="w-full rounded-xl px-4 py-2.5 text-sm focus:outline-none"
+                    style="background: var(--surface-0); border: 1px solid var(--hairline-strong); color: var(--text-primary);">
               <option value="RGB888">RGB888</option>
               <option value="NV21">NV21 (YUV420SP)</option>
               <option value="GRAY8">GRAY8</option>
@@ -155,25 +296,26 @@
         </div>
       </div>
 
-      <!-- Output format selector -->
-      <div class="mt-4 flex items-center justify-center gap-3">
-        <label for="output-format" class="text-sm font-medium text-gray-400">Output Format</label>
-        <select id="output-format"
-                class="rounded-lg border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 focus:border-brand-500 focus:outline-none">
-          <option value="png">PNG (default)</option>
-          <option value="npy">NumPy (.npy)</option>
-          <option value="raw">Raw float32 (.raw)</option>
-          <option value="bin">Binary float32 (.bin)</option>
-          <option value="nv21">NV21 (YUV420SP)</option>
-        </select>
-      </div>
+      <!-- Output format selector + Run button -->
+      <div class="mt-10 flex flex-col items-center gap-5">
+        <div class="flex items-center gap-3">
+          <label for="output-format" class="text-xs font-medium" style="color: var(--text-muted); letter-spacing: 0.04em; text-transform: uppercase;">Output</label>
+          <select id="output-format"
+                  class="rounded-xl px-4 py-2 text-sm focus:outline-none"
+                  style="background: var(--surface-1); border: 1px solid var(--hairline-strong); color: var(--text-primary);">
+            <option value="png">PNG (default)</option>
+            <option value="npy">NumPy (.npy)</option>
+            <option value="raw">Raw float32 (.raw)</option>
+            <option value="bin">Binary float32 (.bin)</option>
+            <option value="nv21">NV21 (YUV420SP)</option>
+          </select>
+        </div>
 
-      <!-- Run button -->
-      <div class="mt-8 text-center">
         <button id="btn-run" disabled
-                class="inline-flex items-center gap-2 rounded-lg bg-brand-600 px-8 py-3 font-semibold text-white shadow-lg shadow-brand-600/25 transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-40">
-          <svg id="spinner" class="hidden h-5 w-5 animate-spin" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
-          <span id="btn-label">Run UPIQAL Analysis</span>
+                class="btn-primary inline-flex items-center gap-3 rounded-full px-10 py-4 text-sm font-semibold tracking-tight">
+          <svg id="spinner" class="hidden h-4 w-4 animate-spin" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
+          <span id="btn-label">Analyze</span>
+          <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
         </button>
       </div>
     </section>
@@ -183,91 +325,100 @@
     <!-- ================================================================= -->
     <section id="results" class="hidden space-y-8">
 
+      <div class="text-center">
+        <p class="eyebrow mb-3">Step 02</p>
+        <h2 class="text-3xl font-bold tracking-tight">Analysis</h2>
+      </div>
+
       <!-- ============================================================= -->
       <!-- ROW 1: Executive Summary (score + stats + severity bars)       -->
       <!-- ============================================================= -->
       <div class="fade-up grid gap-6 lg:grid-cols-3">
 
-        <!-- Score card -->
-        <div class="flex flex-col items-center justify-center rounded-2xl border border-gray-800 bg-gray-900 p-8">
-          <p class="mb-1 text-sm uppercase tracking-widest text-gray-400">FR-IQA Score</p>
-          <p id="score-value" class="text-6xl font-extrabold tabular-nums tracking-tight">--</p>
-          <div class="mt-4 h-3 w-full max-w-xs overflow-hidden rounded-full bg-gray-800">
-            <div id="score-bar" class="gauge-bar h-full rounded-full" style="width:0%"></div>
+        <!-- Score card (hero) -->
+        <div class="card flex flex-col items-center justify-center p-10" style="background: linear-gradient(180deg, #18181b 0%, #0c0c0e 100%);">
+          <p class="eyebrow mb-4">FR-IQA Score</p>
+          <p id="score-value" class="text-7xl font-extrabold tabular-nums tracking-tight" style="letter-spacing: -0.04em;">--</p>
+          <div class="mt-6 h-[6px] w-full max-w-[200px] overflow-hidden rounded-full" style="background: var(--hairline-strong);">
+            <div id="score-bar" class="gauge-bar h-full rounded-full" style="width:0%; background: var(--accent);"></div>
           </div>
-          <p id="score-label" class="mt-2 text-sm text-gray-400"></p>
+          <p id="score-label" class="mt-3 text-xs font-medium" style="color: var(--text-muted);"></p>
         </div>
 
         <!-- Key findings -->
-        <div class="flex flex-col justify-center gap-5 rounded-2xl border border-gray-800 bg-gray-900 p-8">
+        <div class="card flex flex-col justify-center gap-6 p-10">
           <div>
-            <p class="text-xs uppercase tracking-widest text-gray-500">Dominant Artifact</p>
-            <p id="dominant-artifact" class="mt-1 text-lg font-semibold text-red-400">--</p>
+            <p class="eyebrow mb-2">Dominant Artifact</p>
+            <p id="dominant-artifact" class="text-xl font-bold tracking-tight">--</p>
           </div>
+          <div class="h-px" style="background: var(--hairline);"></div>
           <div>
-            <p class="text-xs uppercase tracking-widest text-gray-500">Affected Area</p>
-            <div class="mt-1 flex items-baseline gap-2">
-              <p id="affected-area" class="text-3xl font-bold tabular-nums">--</p>
-              <span class="text-sm text-gray-400">of pixels flagged</span>
+            <p class="eyebrow mb-2">Affected Area</p>
+            <div class="flex items-baseline gap-2">
+              <p id="affected-area" class="text-4xl font-bold tabular-nums" style="letter-spacing: -0.03em;">--</p>
+              <span class="text-xs" style="color: var(--text-muted);">of pixels flagged</span>
             </div>
           </div>
         </div>
 
         <!-- Severity breakdown -->
-        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-8">
-          <p class="mb-4 text-xs uppercase tracking-widest text-gray-500">Artifact Severity</p>
-          <div id="severity-bars" class="space-y-3"></div>
+        <div class="card p-10">
+          <p class="eyebrow mb-5">Artifact Severity</p>
+          <div id="severity-bars" class="space-y-4"></div>
         </div>
       </div>
 
       <!-- ============================================================= -->
       <!-- ROW 2: Interactive Workspace (heatmap gallery + main viewer)   -->
       <!-- ============================================================= -->
-      <div class="fade-up grid gap-6 lg:grid-cols-[280px_1fr]" style="animation-delay:.15s">
+      <div class="fade-up grid gap-6 lg:grid-cols-[260px_1fr]" style="animation-delay:.15s">
 
-        <!-- Sidebar: clickable heatmap gallery with per-item download buttons -->
-        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-4">
-          <p class="mb-3 text-xs uppercase tracking-widest text-gray-500">Diagnostic Layers</p>
+        <!-- Sidebar: clickable heatmap gallery -->
+        <div class="card p-5">
+          <p class="eyebrow mb-4">Diagnostic Layers</p>
           <div id="hm-gallery" class="grid grid-cols-2 gap-3 lg:grid-cols-1"></div>
         </div>
 
         <!-- Main viewer: interactive canvas with zoom/pan, download, and opacity slider -->
-        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-6">
+        <div class="card p-6">
 
           <!-- Header: title + Save As PNG button -->
-          <div class="mb-4 flex items-center justify-between">
-            <h3 id="viewer-title" class="text-lg font-semibold">Anomaly Overlay</h3>
+          <div class="mb-5 flex items-center justify-between">
+            <div>
+              <p class="eyebrow">Viewer</p>
+              <h3 id="viewer-title" class="text-xl font-bold tracking-tight">Anomaly Overlay</h3>
+            </div>
             <button id="btn-save-main" title="Save current heatmap"
-                    class="inline-flex items-center gap-1.5 rounded-lg border border-gray-700 bg-gray-800 px-3 py-1.5 text-xs font-medium text-gray-300 transition hover:border-brand-500 hover:bg-gray-700 hover:text-white">
+                    class="btn-secondary inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold">
               <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4"/></svg>
-              <span id="btn-save-label">Save As PNG</span>
+              <span id="btn-save-label">Save</span>
             </button>
           </div>
 
           <!-- Interactive canvas container -->
-          <div id="viewer-container" class="relative overflow-hidden rounded-lg bg-gray-950" style="min-height:400px; height:520px;">
+          <div id="viewer-container" class="card-inset relative overflow-hidden" style="min-height:400px; height:520px;">
             <canvas id="viewer-canvas" class="block w-full h-full"></canvas>
-            <!-- Zoom level indicator badge (auto-hides) -->
             <div id="zoom-badge"
-                 class="zoom-badge-hidden pointer-events-none absolute top-3 right-3 rounded-md bg-black/70 px-2 py-1 text-xs font-mono tabular-nums text-gray-200 backdrop-blur-sm">
-              1.0x
+                 class="zoom-badge-hidden pointer-events-none absolute top-3 right-3 rounded-full px-3 py-1 text-[11px] font-mono tabular-nums backdrop-blur-md"
+                 style="background: rgba(0,0,0,.7); color: #fafafa; border: 1px solid var(--hairline-strong);">
+              1.0×
             </div>
-            <!-- Hint overlay shown until first interaction -->
             <div id="viewer-hint"
                  class="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <div class="rounded-lg bg-black/50 px-4 py-2 text-xs text-gray-300 backdrop-blur-sm">
-                Scroll to zoom &middot; Drag to pan &middot; Double-click to reset
+              <div class="rounded-full px-4 py-2 text-[11px] font-medium backdrop-blur-md"
+                   style="background: rgba(0,0,0,.55); color: #e4e4e7; border: 1px solid var(--hairline-strong);">
+                Scroll to zoom · Drag to pan · Double-click to reset
               </div>
             </div>
           </div>
 
-          <!-- Opacity blending slider (positioned beneath the canvas) -->
-          <div class="mt-4 flex items-center gap-3">
-            <label class="shrink-0 text-xs font-medium text-gray-400">Overlay Opacity</label>
-            <span class="text-[10px] text-gray-500">0%</span>
+          <!-- Opacity slider -->
+          <div class="mt-5 flex items-center gap-4">
+            <label class="shrink-0 text-[11px] font-semibold" style="color: var(--text-muted); letter-spacing: 0.04em; text-transform: uppercase;">Overlay</label>
+            <span class="text-[10px]" style="color: var(--text-muted);">0%</span>
             <input id="opacity-slider" type="range" min="0" max="100" value="100" class="flex-1" />
-            <span class="text-[10px] text-gray-500">100%</span>
-            <span id="opacity-val" class="w-10 text-right text-xs tabular-nums font-medium text-brand-400">100%</span>
+            <span class="text-[10px]" style="color: var(--text-muted);">100%</span>
+            <span id="opacity-val" class="w-10 text-right text-xs tabular-nums font-semibold" style="color: var(--text-primary);">100%</span>
           </div>
         </div>
       </div>
@@ -276,13 +427,13 @@
       <!-- ROW 3: Side-by-side originals                                 -->
       <!-- ============================================================= -->
       <div class="fade-up grid gap-6 sm:grid-cols-2" style="animation-delay:.25s">
-        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-5">
-          <p class="mb-3 text-xs uppercase tracking-widest text-gray-500">Reference Image</p>
-          <img id="result-ref" class="w-full rounded-lg" alt="Reference" />
+        <div class="card p-5">
+          <p class="eyebrow mb-4">Reference</p>
+          <img id="result-ref" class="w-full rounded-2xl" alt="Reference" />
         </div>
-        <div class="rounded-2xl border border-gray-800 bg-gray-900 p-5">
-          <p class="mb-3 text-xs uppercase tracking-widest text-gray-500">Target Image</p>
-          <img id="result-tgt" class="w-full rounded-lg" alt="Target" />
+        <div class="card p-5">
+          <p class="eyebrow mb-4">Target</p>
+          <img id="result-tgt" class="w-full rounded-2xl" alt="Target" />
         </div>
       </div>
 
@@ -291,23 +442,31 @@
       <!-- ============================================================= -->
       <div class="fade-up flex justify-center" style="animation-delay:.3s">
         <button id="btn-export"
-                class="inline-flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-900 px-6 py-3 text-sm font-medium text-gray-200 transition hover:border-brand-500 hover:bg-gray-800 hover:text-white">
+                class="btn-secondary inline-flex items-center gap-2 rounded-full px-6 py-3 text-sm font-semibold">
           <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4"/></svg>
-          Download JSON Report
+          Download JSON report
         </button>
       </div>
 
     </section>
 
     <!-- Error banner -->
-    <div id="error-banner" class="hidden rounded-lg border border-red-800 bg-red-950 p-4 text-sm text-red-300"></div>
+    <div id="error-banner" class="hidden rounded-2xl p-5 text-sm"
+         style="background: #1c0f0f; border: 1px solid #7f1d1d; color: #fca5a5;"></div>
   </main>
 
   <!-- ================================================================= -->
   <!-- FOOTER                                                            -->
   <!-- ================================================================= -->
-  <footer class="border-t border-gray-800 py-6 text-center text-xs text-gray-500">
-    UPIQAL &mdash; Unified Probabilistic Image Quality &amp; Artifact Locator &bull; 2026
+  <footer class="mt-20 py-8 text-center text-[11px]"
+          style="color: var(--text-muted); border-top: 1px solid var(--hairline);">
+    <div class="mx-auto max-w-6xl px-6 flex items-center justify-center gap-3">
+      <span>UPIQAL</span>
+      <span>·</span>
+      <span>Image Quality &amp; Artifact Locator</span>
+      <span>·</span>
+      <span>2026</span>
+    </div>
   </footer>
 
   <!-- ================================================================= -->
@@ -452,7 +611,7 @@
         const cw = this._cssW || this.container.getBoundingClientRect().width;
         const ch = this._cssH || this.container.getBoundingClientRect().height;
 
-        ctx.fillStyle = '#030712'; // gray-950
+        ctx.fillStyle = '#09090b'; // matches --surface-0
         ctx.fillRect(0, 0, cw, ch);
 
         if (!this.baseImg) return;
@@ -859,7 +1018,8 @@
       const pct = Math.round(score * 100);
       const bar = document.getElementById('score-bar');
       bar.style.width = pct + '%';
-      bar.style.backgroundColor = score < 0.4 ? '#ef4444' : score < 0.7 ? '#eab308' : '#22c55e';
+      // Monochrome bar: pure white on dark — severity is conveyed by the label below.
+      bar.style.background = '#ffffff';
 
       let label;
       if (score >= 0.9) label = 'Excellent quality';
@@ -873,20 +1033,24 @@
       document.getElementById('dominant-artifact').textContent = diag.dominant_artifact;
       document.getElementById('affected-area').textContent = diag.affected_area + '%';
 
-      // --- Severity bars ---
+      // --- Severity bars (monochrome — intensity = bar width alone) ---
       const severityContainer = document.getElementById('severity-bars');
       severityContainer.innerHTML = '';
+      const keys = Object.keys(diag.severity_scores);
       for (const [key, val] of Object.entries(diag.severity_scores)) {
-        const color = severityColors[key] || '#6366f1';
         const labelText = severityLabels[key] || key;
+        // Monochrome bar luminance scales with severity: higher severity = whiter.
+        // 0-100% → zinc-700 (dim) through pure white.
+        const lum = Math.max(0.35, val / 100);
+        const fill = `rgba(255,255,255,${lum.toFixed(3)})`;
         const row = document.createElement('div');
         row.innerHTML =
-          '<div class="flex items-center justify-between text-xs mb-1">' +
-            '<span class="text-gray-300">' + labelText + '</span>' +
-            '<span class="tabular-nums text-gray-400">' + val.toFixed(1) + '%</span>' +
+          '<div class="flex items-center justify-between text-[11px] mb-1.5">' +
+            '<span class="font-medium" style="color: var(--text-primary);">' + labelText + '</span>' +
+            '<span class="tabular-nums font-semibold" style="color: var(--text-muted);">' + val.toFixed(1) + '%</span>' +
           '</div>' +
-          '<div class="h-2 w-full overflow-hidden rounded-full bg-gray-800">' +
-            '<div class="severity-bar h-full rounded-full" style="width:' + val + '%;background-color:' + color + ';animation-delay:' + (Object.keys(diag.severity_scores).indexOf(key) * 0.08) + 's"></div>' +
+          '<div class="h-[6px] w-full overflow-hidden rounded-full" style="background: var(--hairline-strong);">' +
+            '<div class="severity-bar h-full rounded-full" style="width:' + val + '%;background:' + fill + ';animation-delay:' + (keys.indexOf(key) * 0.08) + 's"></div>' +
           '</div>';
         severityContainer.appendChild(row);
       }
@@ -913,11 +1077,13 @@
         wrapper.dataset.key = hm.key;
 
         wrapper.innerHTML =
-          '<img src="' + src + '" class="w-full rounded" alt="' + hm.label + '" />' +
-          '<button class="hm-download absolute top-2 right-2 flex h-6 w-6 items-center justify-center rounded-md bg-black/60 text-white backdrop-blur-sm transition hover:bg-brand-600" title="Download ' + hm.label + ' as PNG">' +
+          '<img src="' + src + '" class="w-full rounded-lg" alt="' + hm.label + '" />' +
+          '<button class="hm-download absolute top-3 right-3 flex h-7 w-7 items-center justify-center rounded-full backdrop-blur-md transition" ' +
+            'style="background: rgba(255,255,255,.9); color: #000; border: 1px solid rgba(255,255,255,.2);" ' +
+            'title="Download ' + hm.label + '">' +
             dlIconSvg +
           '</button>' +
-          '<p class="mt-1 text-center text-[10px] font-medium text-gray-400">' + hm.label + '</p>';
+          '<p class="mt-2 text-center text-[11px] font-semibold" style="color: var(--text-primary); letter-spacing: 0.01em;">' + hm.label + '</p>';
 
         // Click on thumbnail image → select this heatmap in viewer
         wrapper.addEventListener('click', (e) => {

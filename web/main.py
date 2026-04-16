@@ -261,7 +261,9 @@ _RAW_EXTENSIONS = {".raw", ".bin", ".nv21", ".nv12", ".yuv", ".npy"}
 
 def read_image_as_tensor(
     data: bytes,
-    max_side: int = 512,
+    # 768px balances detection fidelity with MPS memory (M1 Pro ~16 GB).
+    # Raise to 1024/2048 on larger-VRAM machines via env override.
+    max_side: int = 768,
     width: int = 0,
     height: int = 0,
     pixel_format: str = "RGB888",
@@ -377,15 +379,49 @@ _ARTIFACT_LABELS = {
 }
 
 
-def compute_diagnostics(diag: torch.Tensor) -> Dict[str, Any]:
+def _hf_energy(img: torch.Tensor) -> torch.Tensor:
+    """Laplacian-variance high-frequency energy proxy.
+
+    Larger value -> more sharp detail (sharpness / noise); smaller ->
+    smoother (blurrier / flatter).  Used by ``compute_diagnostics`` as a
+    discriminator so generic VGG dissimilarity isn't mislabelled as blur
+    when the target is actually sharper than the reference.
+    """
+    if img.shape[1] == 3:
+        w = torch.tensor([0.299, 0.587, 0.114],
+                         device=img.device, dtype=img.dtype).view(1, 3, 1, 1)
+        lum = (img * w).sum(dim=1, keepdim=True)
+    else:
+        lum = img
+    kernel = torch.tensor(
+        [[0.0, -1.0, 0.0], [-1.0, 4.0, -1.0], [0.0, -1.0, 0.0]],
+        device=img.device, dtype=img.dtype,
+    ).view(1, 1, 3, 3)
+    lap = F.conv2d(lum, kernel, padding=1)
+    return lap.var(dim=(1, 2, 3))
+
+
+def compute_diagnostics(
+    diag: torch.Tensor,
+    ref_raw: Optional[torch.Tensor] = None,
+    tgt_raw: Optional[torch.Tensor] = None,
+) -> Dict[str, Any]:
     """Derive severity scores and dominant artifact from the diagnostic tensor.
+
+    Mirrors the CLI's ``compute_diagnostics`` (upiqal_cli.py): ranks
+    candidates by raw contribution * specificity weight, gated by an
+    HF-energy discriminator. This prevents the EMD channel from
+    dominating every label and keeps "Blur" away from structurally
+    different (non-blurred) pairs.
 
     Parameters
     ----------
     diag : torch.Tensor
-        The 5-channel diagnostic tensor ``(1, 5, H, W)`` produced by
-        ``UPIQAL.forward()``.  Channels:
+        The 5-channel diagnostic tensor ``(1, 5, H, W)``. Channels:
         0 = anomaly, 1 = color, 2 = structure, 3 = blocking, 4 = ringing.
+    ref_raw, tgt_raw : torch.Tensor, optional
+        Images in ``[0, 1]`` used by the HF-energy discriminator. When
+        omitted, the discriminator is skipped.
 
     Returns
     -------
@@ -405,15 +441,53 @@ def compute_diagnostics(diag: torch.Tensor) -> Dict[str, Any]:
     blur_sev = float((1.0 - structure).mean().item()) * 100
 
     severity_scores = {
-        "blocking": round(min(blocking_sev * _SEVERITY_MULTIPLIERS["blocking"], 100.0), 1),
-        "ringing": round(min(ringing_sev * _SEVERITY_MULTIPLIERS["ringing"], 100.0), 1),
-        "noise": round(min(noise_sev * _SEVERITY_MULTIPLIERS["noise"], 100.0), 1),
-        "color_shift": round(min(color_sev * _SEVERITY_MULTIPLIERS["color_shift"], 100.0), 1),
-        "blur": round(min(blur_sev * _SEVERITY_MULTIPLIERS["blur"], 100.0), 1),
+        "blocking":    round(min(blocking_sev * _SEVERITY_MULTIPLIERS["blocking"], 100.0), 1),
+        "ringing":     round(min(ringing_sev  * _SEVERITY_MULTIPLIERS["ringing"],  100.0), 1),
+        "noise":       round(min(noise_sev    * _SEVERITY_MULTIPLIERS["noise"],    100.0), 1),
+        "color_shift": round(min(color_sev    * _SEVERITY_MULTIPLIERS["color_shift"], 100.0), 1),
+        "blur":        round(min(blur_sev     * _SEVERITY_MULTIPLIERS["blur"],     100.0), 1),
     }
 
-    dominant_key = max(severity_scores, key=severity_scores.get)
-    dominant_artifact = _ARTIFACT_LABELS[dominant_key]
+    # Contribution weights — high for specificity-rich heuristic masks,
+    # moderate for deep-feature signals. Matches upiqal_cli.py.
+    contrib = {
+        "blocking":    blocking_sev * 1.0,
+        "ringing":     ringing_sev  * 1.0,
+        "noise":       noise_sev    * 0.30,
+        "color_shift": color_sev    * 0.30,
+        "blur":        blur_sev     * 0.50,
+    }
+
+    # HF-energy discriminator
+    if ref_raw is not None and tgt_raw is not None:
+        with torch.no_grad():
+            hf_ref = float(_hf_energy(ref_raw).mean().item())
+            hf_tgt = float(_hf_energy(tgt_raw).mean().item())
+        hf_ratio = hf_tgt / (hf_ref + 1e-8)
+        if hf_ratio > 1.1:
+            contrib["blur"] *= 0.0
+            if noise_sev > 10.0:
+                contrib["color_shift"] *= 0.3
+        elif hf_ratio < 0.9:
+            contrib["noise"]   *= 0.3
+            contrib["ringing"] *= 0.3
+        else:
+            if color_sev >= 25.0:
+                contrib["blur"] *= 0.3
+
+    # MPS / float32 drift can leave a single channel mildly non-zero on
+    # near-identical inputs (deep_sim ≈ 0.88 on MPS → blur_sev ≈ 12%).
+    # Treat a lone weak signal as device noise, not a real artifact.
+    nonzero = {k: v for k, v in severity_scores.items() if v > 0.5}
+    single_weak = (
+        len(nonzero) == 1
+        and next(iter(nonzero.values())) < 15.0
+    )
+    if max(contrib.values()) < 0.5 or single_weak:
+        dominant_artifact = "None"
+    else:
+        dominant_key = max(contrib, key=contrib.get)
+        dominant_artifact = _ARTIFACT_LABELS[dominant_key]
 
     affected_mask = (anomaly > 0.15).float()
     affected_area = round(float(affected_mask.mean().item()) * 100, 1)
@@ -466,13 +540,26 @@ async def compare(
     raw_kw["filename"] = target_image.filename or ""
     tgt_tensor, _, _ = read_image_as_tensor(tgt_bytes, **raw_kw)
 
-    # Ensure same spatial dimensions (resize target to match reference)
+    # Ensure same spatial dimensions. Fix (parity with CLI): downsample the
+    # LARGER image to the SMALLER common size via bicubic + antialias. Never
+    # upsamples, so no bilinear blur is injected into the target — this
+    # eliminates the false "Blur" label on same-content pairs at different
+    # native resolutions.
     _, _, rh, rw = ref_tensor.shape
     _, _, th, tw = tgt_tensor.shape
     if (rh, rw) != (th, tw):
-        tgt_tensor = F.interpolate(
-            tgt_tensor, size=(rh, rw), mode="bilinear", align_corners=False
-        )
+        common_h = min(rh, th)
+        common_w = min(rw, tw)
+        if (rh, rw) != (common_h, common_w):
+            ref_tensor = F.interpolate(
+                ref_tensor, size=(common_h, common_w),
+                mode="bicubic", align_corners=False, antialias=True,
+            ).clamp(0.0, 1.0)
+        if (th, tw) != (common_h, common_w):
+            tgt_tensor = F.interpolate(
+                tgt_tensor, size=(common_h, common_w),
+                mode="bicubic", align_corners=False, antialias=True,
+            ).clamp(0.0, 1.0)
 
     # Move tensors to model device
     model = get_model()
@@ -495,8 +582,10 @@ async def compare(
             tgt_tensor, size=(orig_h, orig_w), mode="bilinear", align_corners=False
         )
 
-    # Compute diagnostics from the diagnostic tensor
-    diagnostics = compute_diagnostics(diag)
+    # Compute diagnostics (HF discriminator uses raw pipeline-size tensors).
+    diagnostics = compute_diagnostics(
+        diag, ref_raw=ref_on_device, tgt_raw=tgt_on_device,
+    )
 
     # Encode heatmap channels as Base64 PNGs
     channel_names = ["anomaly", "color", "structure", "blocking", "ringing"]

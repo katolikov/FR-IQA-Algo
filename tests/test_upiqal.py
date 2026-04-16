@@ -679,20 +679,24 @@ class TestCLIEndToEnd:
 # ---------------------------------------------------------------------------
 
 class TestWebEndToEnd:
-    """Smoke-test the FastAPI ``/api/compare`` endpoint with a mock model."""
+    """Smoke-test the FastAPI ``/api/compare`` endpoint against the REAL UPIQAL
+    pipeline.  VGG16 torchvision weight fetching is patched to return a tiny
+    local model (see ``_mock_vgg16``) so the test runs offline; the UPIQAL
+    module and all five pipeline stages are otherwise unchanged.
+    """
 
     @pytest.fixture
-    def client(self):
-        # Import the app and swap in the lightweight MockUPIQAL so we don't
-        # need real VGG16 weights for the smoke test.
-        from fastapi.testclient import TestClient
+    def client(self, monkeypatch):
         import importlib
+        from fastapi.testclient import TestClient
+        # Patch torchvision's VGG16 loader BEFORE importing web.main so the
+        # real UPIQAL in get_model() initialises with the tiny stand-in weights.
+        monkeypatch.setattr(
+            "torchvision.models.vgg16", _mock_vgg16, raising=True,
+        )
         web_main = importlib.import_module("web.main")
-        from web.mock_upiqal import MockUPIQAL
-
-        web_main._model = MockUPIQAL().eval()
-        # Silence the lazy loader so it always returns our mock.
-        web_main.get_model = lambda: web_main._model  # type: ignore[assignment]
+        # Reset any cached model so the patched VGG16 is used.
+        web_main._model = None  # type: ignore[attr-defined]
         return TestClient(web_main.app)
 
     def _png_bytes(self, seed):
