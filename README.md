@@ -1,4 +1,88 @@
-# Full-Reference Objective Image Quality Assessment and Automated Artifact Detection: A Mathematical and Data-Driven Synthesis
+<p align="center">
+  <img src="web/static/favicon-128.png" alt="UPIQAL" width="96" height="96" />
+</p>
+
+<h1 align="center">UPIQAL · FR-IQA Algo</h1>
+
+<p align="center">
+  <strong>Unified Probabilistic Image Quality &amp; Artifact Locator</strong><br />
+  A full-reference image-quality assessment engine with spatially localized, interpretable artifact heatmaps.
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#web-ui">Web UI</a> ·
+  <a href="#algorithm-formulation-upiqal">Algorithm</a> ·
+  <a href="#ui-design--samsung-monochrome-palette">Palette</a>
+</p>
+
+---
+
+## TL;DR
+
+UPIQAL takes a **reference** and a **target** image and returns:
+
+1. A single FR-IQA scalar score in `[0, 1]` (higher = better).
+2. Five diagnostic heatmaps — `anomaly`, `color`, `structure`, `blocking`, `ringing`.
+3. A labelled dominant artifact (`Severe JPEG Blocking`, `Gibbs Ringing`, `Noise / Granularity`, `Color Shift`, `Blur / Loss of Detail`, or `None`).
+4. Percentage of pixels flagged as "affected".
+
+The pipeline combines Oklab-space optimal-transport chromatic evaluation, VGG16 adaptive dispersion statistics (A-DISTS), probabilistic Mahalanobis uncertainty, and explicit JPEG-blocking / Gibbs-ringing detectors.
+
+## Quick Start
+
+```bash
+# 1) Install — PyTorch, torchvision, fastapi, uvicorn, pillow, numpy
+pip install -r web/requirements.txt
+
+# 2) CLI — one-shot comparison
+python upiqal_cli.py \
+  --reference ref.png --target tgt.png \
+  --max-side 768 --output-dir out/
+
+# 3) Web UI — upload two images, inspect heatmaps, export
+python -m uvicorn web.main:app --host 127.0.0.1 --port 8765
+# open http://127.0.0.1:8765
+```
+
+Representative scores for the three shipped sanity tests:
+
+| Pair | Score | Dominant | Affected |
+|---|---:|---|---:|
+| `image (2).png` vs itself                        | **0.9526** | None           | 0.0 % |
+| `image (2).png` vs `image (3).png`               | **0.8779** | Gibbs Ringing  | 6.4 % |
+| `left.png` vs `right.png` (cartoon worm L vs R)  | **0.7181** | Blur / Loss    | 11.4 % |
+
+The CLI and web backend are numerically identical (both run on CPU; MPS is disabled because its asynchronous OOMs silently nuke the anomaly channel).
+
+## Web UI
+
+The web frontend is a Samsung-One-UI-inspired monochrome single-page app served from FastAPI. Drag-and-drop upload, interactive zoom-pan heatmap viewer with opacity blending, per-channel PNG / NPY / RAW / NV21 export.
+
+<p align="center">
+  <img src="docs/screenshots/img2-vs-img3-overlay.png" alt="Anomaly overlay — img2 vs img3" width="49%" />
+  <img src="docs/screenshots/cartoon-anomaly-overlay.png" alt="Anomaly overlay — cartoon" width="49%" />
+</p>
+
+## UI Design · Samsung Monochrome Palette
+
+The interface uses a strict 9-step greyscale ramp from pure-black tiles to pure-white accents. Intensity (not hue) encodes severity, matching the device-UI aesthetic of Samsung's One UI.
+
+|   | Token | Hex | Role |
+|:-:|:-|:-|:-|
+| <img src="docs/palette/09090b.png" width="28" height="28" /> | `surface-0`        | `#09090b` | Page background |
+| <img src="docs/palette/18181b.png" width="28" height="28" /> | `surface-1`        | `#18181b` | Card surface |
+| <img src="docs/palette/27272a.png" width="28" height="28" /> | `surface-2`        | `#27272a` | Raised / hairline-strong · chips |
+| <img src="docs/palette/3f3f46.png" width="28" height="28" /> | `hairline-strong`  | `#3f3f46` | Border · inactive slider track |
+| <img src="docs/palette/71717a.png" width="28" height="28" /> | `text-muted`       | `#71717a` | Muted text · eyebrow labels |
+| <img src="docs/palette/a1a1aa.png" width="28" height="28" /> | `ink-400`          | `#a1a1aa` | Secondary text |
+| <img src="docs/palette/d4d4d8.png" width="28" height="28" /> | `ink-300`          | `#d4d4d8` | Light divider |
+| <img src="docs/palette/fafafa.png" width="28" height="28" /> | `text-primary`     | `#fafafa` | Primary text |
+| <img src="docs/palette/ffffff.png" width="28" height="28" /> | `accent`           | `#ffffff` | Pure white CTA · overlay thumb |
+
+Typography: [Inter](https://rsms.me/inter/) (400 / 500 / 600 / 700 / 800). Icon: monochrome "U" glyph over a 14-px-rounded black tile with a single white locator-pin accent (see `web/static/favicon.svg`).
+
+---
 
 ## State-of-the-Art Review
 

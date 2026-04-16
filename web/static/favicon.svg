@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  UPIQAL favicon — monochrome Samsung One-UI aesthetic.
+
+  Composition:
+   - Soft-rounded black square (22% radius) for the app-icon silhouette.
+   - White "U" glyph formed by two vertical strokes joined by a curved base,
+     offset and stacked to suggest layered image comparison (reference over
+     target) — a visual hint at the FR-IQA pairwise workflow.
+   - A single accent pixel at the intersection highlights the "artifact
+     locator" aspect of the tool.
+
+  Designed to stay legible at 16×16 (browser tab) through 512×512 (app
+  icon). All coordinates are in a 64×64 viewBox.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <clipPath id="r">
+      <rect x="0" y="0" width="64" height="64" rx="14" ry="14"/>
+    </clipPath>
+  </defs>
+
+  <!-- App tile -->
+  <g clip-path="url(#r)">
+    <rect width="64" height="64" fill="#0a0a0a"/>
+
+    <!-- Subtle top-left highlight band — the One-UI style tile sheen -->
+    <rect x="0" y="0" width="64" height="28" fill="#151518"/>
+
+    <!-- "U" glyph — mid white stroke. Two vertical bars + curved base.
+         Stroke width 6, linecap round for the Samsung-rounded feel. -->
+    <path d="M 20 18 V 36 Q 20 44 32 44 Q 44 44 44 36 V 18"
+          fill="none"
+          stroke="#ffffff"
+          stroke-width="6"
+          stroke-linecap="round"
+          stroke-linejoin="round"/>
+
+    <!-- Layered ghost "U" — offset down+right, 28% opacity, suggests the
+         target image superimposed on the reference. -->
+    <path d="M 22 22 V 38 Q 22 44 32 44 Q 42 44 42 38 V 22"
+          fill="none"
+          stroke="#ffffff"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          opacity="0.28"/>
+
+    <!-- Accent dot (artifact locator pin) -->
+    <circle cx="48" cy="18" r="2.5" fill="#ffffff"/>
+  </g>
+</svg>

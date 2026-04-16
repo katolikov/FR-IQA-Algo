@@ -28,6 +28,7 @@ import torch
 import torch.nn.functional as F
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
 # Ensure the upiqal package (at repo root) is importable when running from web/
@@ -44,6 +45,10 @@ from upiqal import UPIQAL  # noqa: E402
 app = FastAPI(title="UPIQAL - Image Quality Analyzer")
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+STATIC_DIR = Path(__file__).parent / "static"
+
+# Serve the monochrome favicon set + any future static assets.
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Force CPU.  MPS silently OOMs inside ProbabilisticUncertaintyMapper at
 # larger resolutions: the command buffer errors async and the tensor
