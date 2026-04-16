@@ -45,12 +45,12 @@ app = FastAPI(title="UPIQAL - Image Quality Analyzer")
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 
-# Select the best available device (CUDA > MPS > CPU)
-_device: torch.device = torch.device(
-    "cuda" if torch.cuda.is_available()
-    else "mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-    else "cpu"
-)
+# Force CPU.  MPS silently OOMs inside ProbabilisticUncertaintyMapper at
+# larger resolutions: the command buffer errors async and the tensor
+# returns all-zero, nuking the anomaly channel and the "affected area"
+# metric.  CUDA is also disabled because the same user environment does
+# not have it in production, and CPU is numerically authoritative.
+_device: torch.device = torch.device("cpu")
 
 # Model singleton (loaded once at startup, never reloaded per-request)
 _model: Optional[UPIQAL] = None
