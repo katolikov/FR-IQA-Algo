@@ -481,12 +481,46 @@ _ARTIFACT_LABELS = {
 }
 
 
+def _hf_energy(img: torch.Tensor) -> torch.Tensor:
+    """Compute a scalar high-frequency energy proxy per sample.
+
+    Uses Laplacian variance on the luminance channel — a standard
+    sharpness / high-frequency-content measure. Larger value → more
+    high-frequency detail (sharpness or noise); smaller → smoother
+    (blurrier or flatter).
+
+    Parameters
+    ----------
+    img : torch.Tensor
+        Image ``(B, 3, H, W)`` or ``(B, 1, H, W)`` in ``[0, 1]``.
+
+    Returns
+    -------
+    torch.Tensor
+        Per-sample HF energy ``(B,)``.
+    """
+    if img.shape[1] == 3:
+        w = torch.tensor([0.299, 0.587, 0.114],
+                         device=img.device, dtype=img.dtype).view(1, 3, 1, 1)
+        lum = (img * w).sum(dim=1, keepdim=True)
+    else:
+        lum = img
+    kernel = torch.tensor(
+        [[0.0, -1.0, 0.0], [-1.0, 4.0, -1.0], [0.0, -1.0, 0.0]],
+        device=img.device, dtype=img.dtype,
+    ).view(1, 1, 3, 3)
+    lap = F.conv2d(lum, kernel, padding=1)
+    return lap.var(dim=(1, 2, 3))  # (B,)
+
+
 def compute_diagnostics(
     anomaly_norm: torch.Tensor,
     color_norm: torch.Tensor,
     deep_sim: torch.Tensor,
     blocking_mask: torch.Tensor,
     ringing_mask: torch.Tensor,
+    ref_raw: torch.Tensor = None,
+    tgt_raw: torch.Tensor = None,
 ) -> Dict[str, Any]:
     """Compute artifact severity scores, dominant artifact, and affected area.
 
@@ -502,6 +536,13 @@ def compute_diagnostics(
         Binary blocking mask ``(B, 1, H, W)``.
     ringing_mask : torch.Tensor
         Binary ringing mask ``(B, 1, H, W)``.
+    ref_raw, tgt_raw : torch.Tensor, optional
+        Reference / target images in ``[0, 1]`` used to compute a high-
+        frequency-energy discriminator. When provided (recommended), the
+        ``dominant_artifact`` selection is gated so that ``blur`` fires only
+        when the target has LESS high-frequency content than the reference,
+        and ``noise`` only when it has MORE. Without these, the classic
+        max-over-severities logic is used (kept for backward compatibility).
 
     Returns
     -------
@@ -509,26 +550,82 @@ def compute_diagnostics(
         Diagnostics dict with ``dominant_artifact``, ``severity_scores``,
         and ``affected_area``.
     """
-    # Raw severity percentages
+    # Raw severity percentages (pre-multiplier, per-pixel mean)
     blocking_sev = float(blocking_mask.mean().item()) * 100
     ringing_sev = float(ringing_mask.mean().item()) * 100
     noise_sev = float(anomaly_norm.mean().item()) * 100
     color_sev = float(color_norm.mean().item()) * 100
     blur_sev = float((1.0 - deep_sim).mean().item()) * 100
 
+    # Display severities: scale by perceptual multipliers and clamp at 100.
+    # These numbers go into the report/UI and are NOT used for argmax below.
     severity_scores = {
-        "blocking": round(min(blocking_sev * _SEVERITY_MULTIPLIERS["blocking"], 100.0), 1),
-        "ringing": round(min(ringing_sev * _SEVERITY_MULTIPLIERS["ringing"], 100.0), 1),
-        "noise": round(min(noise_sev * _SEVERITY_MULTIPLIERS["noise"], 100.0), 1),
+        "blocking":    round(min(blocking_sev * _SEVERITY_MULTIPLIERS["blocking"], 100.0), 1),
+        "ringing":     round(min(ringing_sev * _SEVERITY_MULTIPLIERS["ringing"], 100.0), 1),
+        "noise":       round(min(noise_sev * _SEVERITY_MULTIPLIERS["noise"], 100.0), 1),
         "color_shift": round(min(color_sev * _SEVERITY_MULTIPLIERS["color_shift"], 100.0), 1),
-        "blur": round(min(blur_sev * _SEVERITY_MULTIPLIERS["blur"], 100.0), 1),
+        "blur":        round(min(blur_sev * _SEVERITY_MULTIPLIERS["blur"], 100.0), 1),
     }
 
-    # Dominant artifact is the one with the highest severity
-    dominant_key = max(severity_scores, key=severity_scores.get)
-    if severity_scores[dominant_key] == 0.0:
+    # ── Dominant-artifact selection ────────────────────────────────
+    # Strategy: rank candidates by their CONTRIBUTION to the score drop
+    # (raw_severity × pipeline_weight), not by the clamped display value.
+    # This keeps the top-1 meaningful when several display channels saturate
+    # at 100. Then apply a high-frequency-energy discriminator so generic
+    # VGG dissimilarity isn't mislabeled as "blur" when the target is
+    # actually SHARPER than the reference (noise / ringing / different
+    # content) — see bugs #2 & #5 in analysis/report.md.
+    #
+    # Weights mirror those in run_pipeline (w_anomaly=0.3, w_color=0.1,
+    # w_structure=0.5, w_heuristic=0.1 shared across blocking+ringing).
+    # Contribution weights for dominant-artifact ranking.
+    # Heuristic masks (blocking, ringing) are high-specificity evidence: when
+    # they fire at all, they almost certainly indicate the named artifact,
+    # so they get the largest multipliers here (even though their
+    # contribution to the final numerical score is small, w_heuristic=0.1).
+    # Color/blur/noise are generic deep-feature signals that overlap, so
+    # they're weighted closer to their pipeline weights.
+    contrib = {
+        "blocking":    blocking_sev * 1.0,   # high specificity
+        "ringing":     ringing_sev  * 1.0,   # high specificity
+        "noise":       noise_sev    * 0.30,
+        "color_shift": color_sev    * 0.30,  # raised so hue shift wins over generic VGG drift
+        "blur":        blur_sev     * 0.50,
+    }
+
+    # HF-energy discriminator: only trust "blur" when tgt is smoother than
+    # ref; only trust "noise" when tgt is rougher. Prevents generic
+    # deep-similarity drop on unrelated images from being mislabeled as
+    # "blur" (bug #5).
+    if ref_raw is not None and tgt_raw is not None:
+        with torch.no_grad():
+            hf_ref = float(_hf_energy(ref_raw).mean().item())
+            hf_tgt = float(_hf_energy(tgt_raw).mean().item())
+        eps = 1e-8
+        hf_ratio = hf_tgt / (hf_ref + eps)
+        # 0.9 / 1.1 deadband is ~10% HF change; beyond that the direction is decisive.
+        if hf_ratio > 1.1:
+            # Target has MORE high-freq → not blur (noise / ringing territory)
+            contrib["blur"] *= 0.0
+            # Noise perturbs pixel-wise colors enough to fully saturate the
+            # Sinkhorn EMD channel; downweight color_shift so noise can win.
+            if noise_sev > 10.0:
+                contrib["color_shift"] *= 0.3
+        elif hf_ratio < 0.9:
+            # Target is smoother → not noise / ringing (blur territory)
+            contrib["noise"]   *= 0.3
+            contrib["ringing"] *= 0.3
+        else:
+            # HF stable → spatial detail preserved.  If color EMD is high,
+            # the delta is dominated by chromatic change, NOT blur.
+            if color_sev >= 25.0:
+                contrib["blur"] *= 0.3
+
+    # Guard: if all contributions are negligible, report "None"
+    if max(contrib.values()) < 0.5:  # 0.5 "severity points" ≈ baseline noise
         dominant_artifact = "None"
     else:
+        dominant_key = max(contrib, key=contrib.get)
         dominant_artifact = _ARTIFACT_LABELS[dominant_key]
 
     # Affected area: percentage of pixels where anomaly exceeds threshold
@@ -585,13 +682,31 @@ def run_pipeline(args: argparse.Namespace) -> None:
     ref_tensor = load_image_as_tensor(args.reference, max_side=args.max_side, **raw_kw)
     tgt_tensor = load_image_as_tensor(args.target, max_side=args.max_side, **raw_kw)
 
-    # Ensure matching spatial dimensions (resize target to reference)
+    # Ensure matching spatial dimensions.
+    #
+    # Previously this bilinear-upsampled the target to the reference size,
+    # which silently injected blur into the target and caused false "blur"/
+    # "color shift" severity on same-content pairs at mismatched native
+    # sizes (validation probe T7: score 0.95 -> 0.84).
+    #
+    # Fix: pick the SMALLER resolution (preserves sharpness of the lower-
+    # res image; never upsamples) and downsample the larger one via bicubic
+    # with antialiasing. If both already match, this is a no-op.
     _, _, rh, rw = ref_tensor.shape
     _, _, th, tw = tgt_tensor.shape
     if (rh, rw) != (th, tw):
-        tgt_tensor = F.interpolate(
-            tgt_tensor, size=(rh, rw), mode="bilinear", align_corners=False
-        )
+        common_h = min(rh, th)
+        common_w = min(rw, tw)
+        if (rh, rw) != (common_h, common_w):
+            ref_tensor = F.interpolate(
+                ref_tensor, size=(common_h, common_w),
+                mode="bicubic", align_corners=False, antialias=True,
+            ).clamp(0.0, 1.0)
+        if (th, tw) != (common_h, common_w):
+            tgt_tensor = F.interpolate(
+                tgt_tensor, size=(common_h, common_w),
+                mode="bicubic", align_corners=False, antialias=True,
+            ).clamp(0.0, 1.0)
 
     B, C, H, W = ref_tensor.shape
     print(f"Resolution: {H} x {W}")
@@ -725,7 +840,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
 
     # ── Compute diagnostics ─────────────────────────────────────────
     diagnostics = compute_diagnostics(
-        anomaly_norm, color_norm, deep_sim, blocking_mask, ringing_mask
+        anomaly_norm, color_norm, deep_sim, blocking_mask, ringing_mask,
+        ref_raw=ref_raw, tgt_raw=tgt_raw,
     )
 
     # ── Print summary ───────────────────────────────────────────────
@@ -850,8 +966,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-side",
         type=int,
-        default=512,
-        help="Maximum pixel dimension for the longer side (default: 512).",
+        default=1024,
+        help=(
+            "Maximum pixel dimension for the longer side (default: 1024). "
+            "Larger values preserve localized artifacts (e.g., 8x8 blocking, "
+            "fine-scale ringing) at the cost of longer runtime. Values in "
+            "[512, 2048] are typical."
+        ),
     )
     parser.add_argument(
         "--output-dir",

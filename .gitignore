@@ -43,3 +43,6 @@ __pycache__/
 
 # debug information files
 *.dwo
+
+# FR-IQA validation suite outputs
+analysis/
