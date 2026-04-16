@@ -60,8 +60,7 @@ The CLI and web backend are numerically identical (both run on CPU; MPS is disab
 The web frontend is a Samsung-One-UI-inspired monochrome single-page app served from FastAPI. Drag-and-drop upload, interactive zoom-pan heatmap viewer with opacity blending, per-channel PNG / NPY / RAW / NV21 export.
 
 <p align="center">
-  <img src="docs/screenshots/img2-vs-img3-overlay.png" alt="Anomaly overlay — img2 vs img3" width="49%" />
-  <img src="docs/screenshots/cartoon-anomaly-overlay.png" alt="Anomaly overlay — cartoon" width="49%" />
+  <img src="docs/screenshots/cartoon-anomaly-overlay.png" alt="Anomaly overlay — cartoon worm left vs right" width="72%" />
 </p>
 
 ## UI Design · Samsung Monochrome Palette
