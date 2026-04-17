@@ -586,9 +586,15 @@ async def paper():
     return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
 
 
-@app.get("/healthz")
+@app.api_route("/healthz", methods=["GET", "HEAD"])
 async def healthz():
-    """Lightweight liveness probe for container platforms (Fly / Render)."""
+    """Lightweight liveness probe.
+
+    Accepts both GET and HEAD so that external monitors (shields.io,
+    UptimeRobot, HF Spaces' own healthcheck) — which default to HEAD —
+    see HTTP 200 instead of the 405 FastAPI would otherwise return for
+    a pure @app.get route.
+    """
     return {"ok": True, "device": str(_device)}
 
 
