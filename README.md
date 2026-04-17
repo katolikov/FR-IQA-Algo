@@ -20,7 +20,7 @@
   <a href="https://katolikov-upiqal-eval.hf.space/healthz">
     <img
       alt="Backend status"
-      src="https://img.shields.io/website?style=for-the-badge&label=Backend&url=https%3A%2F%2Fkatolikov-upiqal-eval.hf.space%2Fhealthz"
+      src="https://img.shields.io/website?style=for-the-badge&label=Backend&up_message=up&down_message=down&cacheSeconds=60&url=https%3A%2F%2Fkatolikov-upiqal-eval.hf.space%2Fhealthz"
     />
   </a>
 </p>
