@@ -63,6 +63,59 @@ The web frontend is a Samsung-One-UI-inspired monochrome single-page app served 
   <img src="docs/screenshots/cartoon-anomaly-overlay.png" alt="Anomaly overlay — cartoon worm left vs right" width="72%" />
 </p>
 
+## Worked Example · Spot-the-Differences
+
+A classic "spot the differences" cartoon (A vs B). UPIQAL's Global Anomaly Map and Color Degradation Map highlight the same regions that a human eye or the printed answer key flags.
+
+### Inputs
+
+<table>
+<tr>
+  <th align="center">Reference (A)</th>
+  <th align="center">Target (B)</th>
+</tr>
+<tr>
+  <td><img src="docs/examples/cartoon_A_reference.png" alt="Cartoon A" /></td>
+  <td><img src="docs/examples/cartoon_B_target.png"    alt="Cartoon B" /></td>
+</tr>
+</table>
+
+### UPIQAL output
+
+Running the CLI on this pair (`--max-side 768`):
+
+```
+FR-IQA Score        0.7342  (Good quality)
+Dominant Artifact   Blur / Loss of Detail
+Affected Area       2.9 %
+Severities          blocking=0.0  ringing=62.9  noise=15.7  color=17.6  blur=70.2
+```
+
+<table>
+<tr>
+  <th align="center">Global Anomaly Map</th>
+  <th align="center">Color Degradation Map</th>
+  <th align="center">Anomaly Overlay</th>
+</tr>
+<tr>
+  <td><img src="docs/examples/upiqal_output/global_anomaly_map.png"    alt="Global anomaly map" /></td>
+  <td><img src="docs/examples/upiqal_output/color_degradation_map.png" alt="Color degradation map" /></td>
+  <td><img src="docs/examples/upiqal_output/anomaly_overlay.png"       alt="Anomaly overlay" /></td>
+</tr>
+</table>
+
+### Golden reference
+
+The cartoon puzzle's own printed answer key (10 circled differences):
+
+<p align="center">
+  <img src="docs/examples/cartoon_golden_differences.png" alt="Golden reference — circled differences" width="72%" />
+</p>
+
+Hot regions on the UPIQAL maps align with the circled locations (missing goblet beside the cheese, dog's bone, middle table cups, banana, shoe colour, plant base, etc.), with dispersed low-magnitude response elsewhere from natural intensity variation between the two scans.
+
+---
+
 ## UI Design · Samsung Monochrome Palette
 
 The interface uses a strict 9-step greyscale ramp from pure-black tiles to pure-white accents. Intensity (not hue) encodes severity, matching the device-UI aesthetic of Samsung's One UI.

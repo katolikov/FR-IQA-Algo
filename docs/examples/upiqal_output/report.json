@@ -1,0 +1,23 @@
+{
+  "tool": "UPIQAL FR-IQA v0.1.0",
+  "timestamp": "2026-04-17T03:05:04.876101",
+  "reference_image": "/Users/artemkatolikov/DEV/FR-IQA-Algo/docs/examples/cartoon_A_reference.png",
+  "target_image": "/Users/artemkatolikov/DEV/FR-IQA-Algo/docs/examples/cartoon_B_target.png",
+  "output_directory": "docs/examples/upiqal_output",
+  "image_resolution": {
+    "height": 482,
+    "width": 768
+  },
+  "score": 0.7342,
+  "diagnostics": {
+    "dominant_artifact": "Blur / Loss of Detail",
+    "severity_scores": {
+      "blocking": 0.0,
+      "ringing": 62.9,
+      "noise": 15.7,
+      "color_shift": 17.6,
+      "blur": 70.2
+    },
+    "affected_area": 2.9
+  }
+}
