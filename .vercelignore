@@ -29,5 +29,17 @@ fly.toml
 render.yaml
 .dockerignore
 .DS_Store
+# Python build artefacts — catch at every depth, including the repo
+# root. The bare `__pycache__/` pattern Vercel was honouring in
+# `.vercelignore` did not always anchor correctly, so we also spell out
+# the common root-level and nested forms and extensions.
+__pycache__
 __pycache__/
+**/__pycache__
+**/__pycache__/
 *.pyc
+*.pyo
+**/*.pyc
+**/*.pyo
+# Deploy build workspace (clone of the HF Space repo).
+build/
