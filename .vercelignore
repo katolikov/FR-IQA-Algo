@@ -43,3 +43,9 @@ __pycache__/
 **/*.pyo
 # Deploy build workspace (clone of the HF Space repo).
 build/
+
+# The Python proxy is no longer used — Vercel routes /api/* directly
+# to the HF Space via a native rewrite in vercel.json. Ignore the
+# whole api/ directory so Vercel's Python auto-detector doesn't try
+# to build a FastAPI app from it.
+api/
