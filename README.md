@@ -55,14 +55,6 @@ Representative scores for the three shipped sanity tests:
 
 The CLI and web backend are numerically identical (both run on CPU; MPS is disabled because its asynchronous OOMs silently nuke the anomaly channel).
 
-## Web UI
-
-The web frontend is a Samsung-One-UI-inspired monochrome single-page app served from FastAPI. Drag-and-drop upload, interactive zoom-pan heatmap viewer with opacity blending, per-channel PNG / NPY / RAW / NV21 export.
-
-<p align="center">
-  <img src="docs/screenshots/cartoon-anomaly-overlay.png" alt="Anomaly overlay — cartoon worm left vs right" width="72%" />
-</p>
-
 ## Worked Example · Spot-the-Differences
 
 A classic "spot the differences" cartoon (A vs B). UPIQAL's Global Anomaly Map and Color Degradation Map highlight the same regions that a human eye or the printed answer key flags.
