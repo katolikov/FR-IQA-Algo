@@ -275,6 +275,13 @@ def _is_raw_file(path: str) -> bool:
     return Path(path).suffix.lower() in _RAW_EXTENSIONS
 
 
+def _pyramid_target(hw: tuple[int, int], max_side: int) -> tuple[int, int]:
+    """Return new (H, W) with aspect preserved and longer side at most max_side."""
+    h, w = hw
+    scale = max_side / float(max(h, w))
+    return (max(1, int(round(h * scale))), max(1, int(round(w * scale))))
+
+
 def load_image_as_tensor(
     path: str,
     max_side: int = 512,
@@ -698,8 +705,42 @@ def run_pipeline(args: argparse.Namespace) -> None:
         height=getattr(args, "height", 0) or 0,
         pixel_format=getattr(args, "pixel_format", "RGB888") or "RGB888",
     )
-    ref_tensor = load_image_as_tensor(args.reference, max_side=args.max_side, **raw_kw)
-    tgt_tensor = load_image_as_tensor(args.target, max_side=args.max_side, **raw_kw)
+    # Multi-scale pyramid (Phase 1 of the paper): load at FULL resolution,
+    # then downsample a separate copy for the deep-feature branch. The
+    # heuristics (blocking/ringing/noise/blur) run on the original pixels
+    # so grid-aligned artefacts aren't blurred away; Modules 1-4 use the
+    # 256-ish-sided pyramid level for speed and to match the paper's
+    # "minimum dimension ~ 256 px for standard feature extraction".
+    # Opt out via --no-pyramid to restore single-scale behaviour.
+    use_pyramid = bool(getattr(args, "pyramid", True))
+    feature_side = int(getattr(args, "feature_side", 256))
+
+    if use_pyramid:
+        ref_full = load_image_as_tensor(args.reference, max_side=args.max_side, **raw_kw)
+        tgt_full = load_image_as_tensor(args.target, max_side=args.max_side, **raw_kw)
+        # Deep-feature copy: aggressively shrunk so VGG16 runs fast and
+        # sees the same effective spatial frequencies as in the paper.
+        ref_tensor = (
+            F.interpolate(
+                ref_full, size=_pyramid_target(ref_full.shape[-2:], feature_side),
+                mode="bicubic", align_corners=False, antialias=True,
+            ).clamp(0.0, 1.0)
+            if max(ref_full.shape[-2:]) > feature_side
+            else ref_full
+        )
+        tgt_tensor = (
+            F.interpolate(
+                tgt_full, size=_pyramid_target(tgt_full.shape[-2:], feature_side),
+                mode="bicubic", align_corners=False, antialias=True,
+            ).clamp(0.0, 1.0)
+            if max(tgt_full.shape[-2:]) > feature_side
+            else tgt_full
+        )
+    else:
+        ref_full = load_image_as_tensor(args.reference, max_side=args.max_side, **raw_kw)
+        tgt_full = load_image_as_tensor(args.target, max_side=args.max_side, **raw_kw)
+        ref_tensor = ref_full
+        tgt_tensor = tgt_full
 
     # Ensure matching spatial dimensions.
     #
@@ -711,21 +752,28 @@ def run_pipeline(args: argparse.Namespace) -> None:
     # Fix: pick the SMALLER resolution (preserves sharpness of the lower-
     # res image; never upsamples) and downsample the larger one via bicubic
     # with antialiasing. If both already match, this is a no-op.
-    _, _, rh, rw = ref_tensor.shape
-    _, _, th, tw = tgt_tensor.shape
-    if (rh, rw) != (th, tw):
-        common_h = min(rh, th)
-        common_w = min(rw, tw)
-        if (rh, rw) != (common_h, common_w):
-            ref_tensor = F.interpolate(
-                ref_tensor, size=(common_h, common_w),
-                mode="bicubic", align_corners=False, antialias=True,
+    # Reconcile ref/tgt spatial sizes at BOTH pyramid levels so the rest
+    # of the pipeline sees matching shapes.
+    def _match(a: torch.Tensor, b: torch.Tensor):
+        _, _, ah, aw = a.shape
+        _, _, bh, bw = b.shape
+        if (ah, aw) == (bh, bw):
+            return a, b
+        ch, cw = min(ah, bh), min(aw, bw)
+        if (ah, aw) != (ch, cw):
+            a = F.interpolate(
+                a, size=(ch, cw), mode="bicubic",
+                align_corners=False, antialias=True,
             ).clamp(0.0, 1.0)
-        if (th, tw) != (common_h, common_w):
-            tgt_tensor = F.interpolate(
-                tgt_tensor, size=(common_h, common_w),
-                mode="bicubic", align_corners=False, antialias=True,
+        if (bh, bw) != (ch, cw):
+            b = F.interpolate(
+                b, size=(ch, cw), mode="bicubic",
+                align_corners=False, antialias=True,
             ).clamp(0.0, 1.0)
+        return a, b
+
+    ref_tensor, tgt_tensor = _match(ref_tensor, tgt_tensor)
+    ref_full, tgt_full = _match(ref_full, tgt_full)
 
     B, C, H, W = ref_tensor.shape
     print(f"Resolution: {H} x {W}")
@@ -780,7 +828,12 @@ def run_pipeline(args: argparse.Namespace) -> None:
         out_dir = Path(dir_name)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Keep raw copies for modules that operate on [0, 1] images
+    # Keep raw copies for modules that operate on [0, 1] images.
+    # ref_raw / tgt_raw are the pyramid-feature level (used by Modules 2-4
+    # for chromatic transport and the HF-energy discriminator at the
+    # diagnostic stage).  ref_full / tgt_full are the original-resolution
+    # pixels fed to Module 5 (heuristics), which need pixel-perfect grid
+    # alignment for blocking and edge-exact locations for ringing.
     ref_raw = ref_tensor.clone()
     tgt_raw = tgt_tensor.clone()
 
@@ -817,14 +870,22 @@ def run_pipeline(args: argparse.Namespace) -> None:
     dt = time.perf_counter() - t0
     print(f"[4/5] Uncertainty Mapping ... done ({dt:.2f}s)")
 
-    # ── Module 5: Spatial Heuristics ────────────────────────────────
+    # ── Module 5: Spatial Heuristics (at FULL resolution) ──────────
+    # The paper's Phase 1 explicitly keeps heuristic analysis at native
+    # resolution so grid phases and ringing near edges aren't blurred.
     t0 = time.perf_counter()
     with torch.no_grad():
-        heur = heuristics(ref_raw, tgt_raw)
-    blocking_mask = heur["blocking_mask"]  # (B, 1, H, W)
-    ringing_mask = heur["ringing_mask"]    # (B, 1, H, W)
-    noise_mask = heur["noise_mask"]        # (B, 1, H, W)
-    blur_mask = heur["blur_mask"]          # (B, 1, H, W)
+        heur = heuristics(ref_full, tgt_full)
+    # Downsample masks to pipeline resolution for aggregation with the
+    # other modules' maps.
+    def _to_pipe(m: torch.Tensor) -> torch.Tensor:
+        if m.shape[-2:] == (H, W):
+            return m
+        return F.interpolate(m, size=(H, W), mode="bilinear", align_corners=False)
+    blocking_mask = _to_pipe(heur["blocking_mask"])
+    ringing_mask = _to_pipe(heur["ringing_mask"])
+    noise_mask = _to_pipe(heur["noise_mask"])
+    blur_mask = _to_pipe(heur["blur_mask"])
     dt = time.perf_counter() - t0
     print(f"[5/5] Spatial Heuristics  ... done ({dt:.2f}s)")
 
@@ -855,15 +916,30 @@ def run_pipeline(args: argparse.Namespace) -> None:
     # Heuristic penalty: fraction of pixels flagged
     heur_penalty = (blocking_mask + ringing_mask).clamp(0.0, 1.0).mean(dim=(2, 3))  # (B, 1)
 
-    # Final score: weighted combination (higher = better)
-    score_spatial = (
-        w_structure * deep_sim
-        - w_anomaly * anomaly_norm
-        - w_color * color_norm
-    )
-    score_per_pixel = score_spatial.mean(dim=(2, 3))  # (B, 1)
-    final_score_tensor = score_scale * (score_per_pixel - score_center) - w_heuristic * heur_penalty
-    final_score_tensor = torch.sigmoid(final_score_tensor).squeeze(1)  # (B,)
+    # Final score: either the legacy sigmoid calibration or the paper's
+    # negative-log-likelihood mapping.  Toggle via --score-mode.
+    score_mode = getattr(args, "score_mode", "sigmoid")
+    if score_mode == "sigmoid":
+        score_spatial = (
+            w_structure * deep_sim
+            - w_anomaly * anomaly_norm
+            - w_color * color_norm
+        )
+        score_per_pixel = score_spatial.mean(dim=(2, 3))  # (B, 1)
+        final_score_tensor = (
+            score_scale * (score_per_pixel - score_center)
+            - w_heuristic * heur_penalty
+        )
+        final_score_tensor = torch.sigmoid(final_score_tensor).squeeze(1)  # (B,)
+    else:  # "nll"
+        nll_spatial = (
+            w_anomaly * anomaly_norm
+            + w_color * color_norm
+            + w_structure * (1.0 - deep_sim)
+        )
+        total_nll = nll_spatial.mean(dim=(2, 3)) + w_heuristic * heur_penalty
+        final_score_tensor = torch.exp(-score_scale * total_nll).squeeze(1)
+        final_score_tensor = final_score_tensor.clamp(0.0, 1.0)
     final_score = round(float(final_score_tensor[0].item()), 4)
 
     # ── Build diagnostic tensor (B, 7, H, W) ───────────────────────
@@ -1061,6 +1137,45 @@ def parse_args() -> argparse.Namespace:
             "Path to a trained Cholesky checkpoint for Module 4 "
             "(produced by train_uncertainty.py). If omitted, the "
             "identity-diagonal baseline is used."
+        ),
+    )
+
+    # --- Multi-scale pyramid (Phase 1 of the article) ---
+    parser.add_argument(
+        "--no-pyramid",
+        dest="pyramid",
+        action="store_false",
+        default=True,
+        help=(
+            "Disable the multi-scale pyramid and run all modules at the "
+            "same resolution (legacy behaviour). By default the "
+            "heuristics (Module 5) run on the full-resolution image "
+            "while Modules 1-4 use the --feature-side downsample."
+        ),
+    )
+    parser.add_argument(
+        "--feature-side",
+        dest="feature_side",
+        type=int,
+        default=256,
+        help=(
+            "Maximum longer-side (in pixels) of the deep-feature "
+            "pyramid level used by Modules 1-4 (default 256; paper "
+            "default)."
+        ),
+    )
+
+    # --- Score aggregation mode (Module-agnostic) ---
+    parser.add_argument(
+        "--score-mode",
+        dest="score_mode",
+        choices=["sigmoid", "nll"],
+        default="sigmoid",
+        help=(
+            "Final-score normalisation formula. 'sigmoid' (default) "
+            "matches the hand-calibrated legacy score; 'nll' is the "
+            "paper-prescribed negative-log-likelihood mapping "
+            "exp(-score_scale * total_nll)."
         ),
     )
 

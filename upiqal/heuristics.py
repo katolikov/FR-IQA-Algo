@@ -1,17 +1,19 @@
 """Module 5: Spatial Artifact Heuristics Engine.
 
 Implements vectorized detection of:
-- JPEG blocking artifacts (modulo-8 cross-difference filters + NFA)
-- Gibbs ringing artifacts (Sobel edge detection + morphological dilation +
-  variance ratio thresholding)
-- Additive Gaussian noise (Haar wavelet HH-subband + Donoho MAD estimator)
+- JPEG blocking artifacts (modulo-8 cross-difference filters + true
+  a-contrario Number-of-False-Alarms binomial tail test)
+- Gibbs ringing artifacts (Sobel edge detection + morphological dilation
+  + systematic-to-statistical error quotient eps, lifted from CT imaging)
+- Additive Gaussian noise (multi-level Haar wavelet HH-subband + Donoho
+  MAD estimator across 3 decomposition levels)
 - Blur / loss of detail (high-frequency energy attenuation in target vs
   reference, i.e. edge-spread)
 """
 
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -24,38 +26,65 @@ import torch.nn.functional as F
 
 
 class JPEGBlockingDetector(nn.Module):
-    """Detect JPEG 8x8 DCT blocking artifacts via cross-difference filtering.
+    """Detect JPEG 8x8 DCT blocking artifacts via a-contrario cross-differences.
 
     Computes horizontal and vertical absolute cross-differences on the
     luminance channel, accumulates energy at modulo-8 offsets, and flags
-    grid phases whose energy exceeds a statistical threshold (NFA-based).
+    grid phases whose Number-of-False-Alarms (NFA) falls below 1.
 
-    The detector is *differential*: it computes the blocking mask for both
-    ``ref`` and ``tgt`` and returns only the excess blocking introduced in
-    the target. This avoids false positives on reference images that contain
-    intrinsic periodic content (e.g., stripes, tiled patterns).
+    **A-contrario test.** For each candidate phase ``k`` of the 8-pixel
+    grid, let
+
+    - ``N_k``  = number of candidate boundary positions at phase k,
+    - ``T``    = a robust threshold on the differential cross-difference
+                 (we use the 95th percentile of the target's differential
+                 horizontal/vertical energy, ignoring zeros),
+    - ``p``    = empirical probability that a non-boundary difference
+                 exceeds ``T`` (~ 0.05 by construction, but the threshold
+                 is re-estimated per image so self-calibrates),
+    - ``k_k``  = number of boundary positions at phase k whose
+                 differential cross-difference exceeds ``T``.
+
+    Under the null hypothesis "no artificial grid at phase k", ``k_k`` is
+    Binomial(N_k, p).  The NFA is
+
+        NFA(k) = N_tests * P[K >= k_k]
+
+    with ``N_tests = bs`` (one per candidate phase).  A phase is flagged
+    blocking when ``NFA(k) < nfa_threshold`` (default 1.0 - the classical
+    "meaningful" threshold from Desolneux-Moisan-Morel).
+
+    The detector is *differential*: it compares target excess energy to
+    the reference, so intrinsic periodic content in the reference (tiles,
+    fences, brickwork) does not trigger false positives.
 
     Parameters
     ----------
     block_size : int
         DCT block size (default 8).
     nfa_threshold : float
-        Inverse energy-ratio threshold for flagging a grid phase. A phase is
-        considered blocked when ``boundary_energy / interior_energy >
-        1/nfa_threshold``. Default ``0.25`` → ratio > 4, which catches
-        moderate pixel-domain DCT quantization without firing on natural
-        textures. (The old default of 0.01 → ratio > 100 was too strict and
-        missed realistic blocking artifacts.)
+        Meaningfulness threshold on NFA (default 1.0 - a phase is flagged
+        when the expected number of false alarms across all tested phases
+        is below 1).  **Lower = stricter.**
+    percentile : float
+        Percentile of the non-zero differential cross-difference used as
+        the threshold ``T`` for the binomial test (default 95.0).
     """
 
     def __init__(
         self,
         block_size: int = 8,
-        nfa_threshold: float = 0.35,
+        nfa_threshold: float = 1e-2,
+        percentile: float = 95.0,
     ) -> None:
         super().__init__()
+        if not 0.0 < percentile < 100.0:
+            raise ValueError(
+                f"percentile must be in (0, 100); got {percentile}"
+            )
         self.block_size = block_size
-        self.nfa_threshold = nfa_threshold
+        self.nfa_threshold = float(nfa_threshold)
+        self.percentile = float(percentile)
 
         # Horizontal cross-difference kernel: [1, -1]
         h_kernel = torch.tensor([[[[1.0, -1.0]]]])  # (1,1,1,2)
@@ -94,34 +123,54 @@ class JPEGBlockingDetector(nn.Module):
         e_v = F.conv2d(lum, self.v_kernel, padding=(0, 0)).abs()  # (B,1,H-1,W)
         return lum, e_h, e_v
 
+    # ------------------------------------------------------------------
+    # A-contrario binomial tail (log-domain for numerical stability)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _binom_tail_ge(k: int, n: int, p: float) -> float:
+        """Return P[Binom(n, p) >= k] using log-sum-exp for stability."""
+        if k <= 0:
+            return 1.0
+        if k > n:
+            return 0.0
+        p = min(max(float(p), 1e-12), 1.0 - 1e-12)
+        # Sum over i in [k, n] of C(n, i) p^i (1-p)^(n-i)
+        import math
+
+        log_p = math.log(p)
+        log_q = math.log(1.0 - p)
+        # Compute log C(n, i) iteratively, then use logsumexp.
+        log_pmf: list[float] = []
+        log_c = 0.0  # log C(n, 0) = 0
+        for i in range(0, k):
+            # advance to log C(n, i+1) = log C(n, i) + log((n-i)/(i+1))
+            log_c += math.log((n - i) / (i + 1))
+        for i in range(k, n + 1):
+            log_pmf.append(log_c + i * log_p + (n - i) * log_q)
+            if i < n:
+                log_c += math.log((n - i) / (i + 1))
+        m = max(log_pmf)
+        return math.exp(m + math.log(sum(math.exp(v - m) for v in log_pmf)))
+
     def forward(self, ref: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
-        """Compute the differential blocking artifact mask.
+        """Compute the differential blocking artifact mask via NFA.
 
-        Strategy:
-          1. Compute per-pixel absolute horizontal & vertical cross-differences
-             for both images.
-          2. Subtract ``ref`` energy from ``tgt`` to get EXCESS edge energy
-             introduced in the target (true degradation, not intrinsic edges).
-          3. For each candidate block-grid phase ``k ∈ [0, bs-1]``, compute
-             the mean excess energy at boundary lines vs. interior lines.
-             Flag the phase with the highest energy ratio when it exceeds
-             ``1 / nfa_threshold`` (default 4).
-          4. Produce a binary mask marking boundary columns/rows at the
-             winning phase.
-
-        Making the test differential-by-construction (step 2) both fixes:
-          - Bug #4: false positives on intrinsic periodic content in ref
-            (e.g., self-comparison of a striped image no longer triggers).
-          - Bug #3: previously-strict absolute-ratio tests couldn't detect
-            real JPEG Q≤10 (tgt boundary ratio 2.0× vs ref 1.58× → differential
-            ratio 2.3× on diff-energy is detectable).
+        Strategy (differential + a-contrario):
+          1. Compute per-pixel absolute horizontal/vertical cross-differences
+             for both images; take the clamped (non-negative) difference
+             ``tgt - ref`` so intrinsic periodic content does NOT count.
+          2. Pick a threshold ``T`` = the ``percentile`` quantile of the
+             positive differential (self-calibrating per image).
+          3. For each phase ``k in [0, bs-1]``, count boundary positions
+             whose differential exceeds ``T``; compute NFA via the
+             binomial tail and flag phases with ``NFA(k) < nfa_threshold``.
+          4. Emit a binary mask marking boundary rows/columns at every
+             flagged phase.
 
         Parameters
         ----------
-        ref : torch.Tensor
-            Reference image ``(B, 3, H, W)`` or ``(B, 1, H, W)``.
-        tgt : torch.Tensor
-            Target image ``(B, 3, H, W)`` or ``(B, 1, H, W)``.
+        ref, tgt : torch.Tensor
+            Images ``(B, 3, H, W)`` or ``(B, 1, H, W)``.
 
         Returns
         -------
@@ -130,64 +179,64 @@ class JPEGBlockingDetector(nn.Module):
         """
         _, e_h_ref, e_v_ref = self._cross_diffs(ref)
         lum_t, e_h_tgt, e_v_tgt = self._cross_diffs(tgt)
-        de_h = (e_h_tgt - e_h_ref).clamp(min=0.0)  # excess horizontal edge energy
-        de_v = (e_v_tgt - e_v_ref).clamp(min=0.0)  # excess vertical edge energy
+        de_h = (e_h_tgt - e_h_ref).clamp(min=0.0)  # (B, 1, H, W-1)
+        de_v = (e_v_tgt - e_v_ref).clamp(min=0.0)  # (B, 1, H-1, W)
 
         B, _, H, W = lum_t.shape
         bs = self.block_size
-        threshold = 1.0 / self.nfa_threshold
 
-        mask_h = torch.zeros(B, 1, H, W, device=lum_t.device)
-        ratios_h, cols_per_k = [], []
-        for k in range(bs):
-            cols = torch.arange(k, W - 1, bs, device=lum_t.device)
-            if cols.numel() == 0:
-                ratios_h.append(None); cols_per_k.append(None); continue
-            a_k = de_h[:, :, :, cols].mean(dim=(2, 3))  # (B, 1)
-            other_cols = torch.arange(W - 1, device=lum_t.device)
-            other_cols = other_cols[other_cols % bs != k]
-            bg = de_h[:, :, :, other_cols].mean(dim=(2, 3)) if other_cols.numel() else a_k
-            ratio = a_k / (bg + 1e-8)
-            ratios_h.append(ratio); cols_per_k.append(cols)
-        if any(r is not None for r in ratios_h):
-            stacked = torch.stack(
-                [r if r is not None else torch.zeros_like(ratios_h[0])
-                 for r in ratios_h], dim=0)
-            best_r_h, best_k_h = stacked.max(dim=0)
-            is_blocked_h = (best_r_h > threshold).float()
-            for b in range(B):
-                if is_blocked_h[b, 0].item() > 0:
-                    k = int(best_k_h[b, 0].item())
-                    cols = cols_per_k[k]
-                    if cols is not None and cols.numel() > 0:
-                        mask_h[b, 0, :, cols] = 1.0
-
-        mask_v = torch.zeros(B, 1, H, W, device=lum_t.device)
-        ratios_v, rows_per_k = [], []
-        for k in range(bs):
-            rows = torch.arange(k, H - 1, bs, device=lum_t.device)
-            if rows.numel() == 0:
-                ratios_v.append(None); rows_per_k.append(None); continue
-            a_k = de_v[:, :, rows, :].mean(dim=(2, 3))
-            other_rows = torch.arange(H - 1, device=lum_t.device)
-            other_rows = other_rows[other_rows % bs != k]
-            bg = de_v[:, :, other_rows, :].mean(dim=(2, 3)) if other_rows.numel() else a_k
-            ratio = a_k / (bg + 1e-8)
-            ratios_v.append(ratio); rows_per_k.append(rows)
-        if any(r is not None for r in ratios_v):
-            stacked = torch.stack(
-                [r if r is not None else torch.zeros_like(ratios_v[0])
-                 for r in ratios_v], dim=0)
-            best_r_v, best_k_v = stacked.max(dim=0)
-            is_blocked_v = (best_r_v > threshold).float()
-            for b in range(B):
-                if is_blocked_v[b, 0].item() > 0:
-                    k = int(best_k_v[b, 0].item())
-                    rows = rows_per_k[k]
-                    if rows is not None and rows.numel() > 0:
-                        mask_v[b, 0, rows, :] = 1.0
-
+        mask_h = self._nfa_axis(de_h, axis="h", B=B, H=H, W=W, bs=bs)
+        mask_v = self._nfa_axis(de_v, axis="v", B=B, H=H, W=W, bs=bs)
         return ((mask_h + mask_v) > 0).float()
+
+    def _nfa_axis(
+        self,
+        de: torch.Tensor,
+        axis: str,
+        B: int,
+        H: int,
+        W: int,
+        bs: int,
+    ) -> torch.Tensor:
+        """Per-axis a-contrario test. ``axis`` is "h" or "v"."""
+        out = torch.zeros(B, 1, H, W, device=de.device, dtype=de.dtype)
+        # Per-batch threshold T = percentile of nonzero differential energy.
+        for b in range(B):
+            flat = de[b].flatten()
+            # Only positive entries carry information under the null.
+            nonzero = flat[flat > 0]
+            if nonzero.numel() < bs:  # not enough data to calibrate
+                continue
+            T = float(
+                torch.quantile(nonzero, self.percentile / 100.0).item()
+            )
+            # Empirical null-hypothesis hit rate: how often a generic
+            # position exceeds T in the differential map.
+            p = float((de[b] > T).float().mean().item())
+            if p <= 0.0 or p >= 1.0:
+                continue
+            n_tests = bs
+            for k in range(bs):
+                if axis == "h":
+                    idx = torch.arange(k, W - 1, bs, device=de.device)
+                    if idx.numel() == 0:
+                        continue
+                    cells = de[b, :, :, idx]
+                else:
+                    idx = torch.arange(k, H - 1, bs, device=de.device)
+                    if idx.numel() == 0:
+                        continue
+                    cells = de[b, :, idx, :]
+                n_k = int(cells.numel())
+                k_k = int((cells > T).sum().item())
+                pvalue = self._binom_tail_ge(k_k, n_k, p)
+                nfa = n_tests * pvalue
+                if nfa < self.nfa_threshold:
+                    if axis == "h":
+                        out[b, 0, :, idx] = 1.0
+                    else:
+                        out[b, 0, idx, :] = 1.0
+        return out
 
 
 # ======================================================================
@@ -224,12 +273,17 @@ class GibbsRingingDetector(nn.Module):
         dilation_size: int = 5,
         variance_ratio_threshold: float = 2.0,
         local_window: int = 7,
+        epsilon_threshold: float = 2.5,
     ) -> None:
         super().__init__()
         self.edge_threshold = edge_threshold
         self.dilation_size = dilation_size
         self.variance_ratio_threshold = variance_ratio_threshold
         self.local_window = local_window
+        # Systematic-to-statistical error quotient threshold (CT-imaging
+        # formulation, Tang et al. 2012 "Quantification of ring artifact
+        # visibility in CT"). Higher epsilon => more evidence of ringing.
+        self.epsilon_threshold = float(epsilon_threshold)
 
         # Sobel kernels
         sobel_x = torch.tensor(
@@ -297,8 +351,41 @@ class GibbsRingingDetector(nn.Module):
         total = mask.sum(dim=(2, 3)).clamp(min=1.0)
         return local_var.sum(dim=(2, 3)) / total  # (B, 1)
 
+    def _mean_abs_hf(self, x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        """Mean absolute high-pass residual inside a binary mask.
+
+        The residual ``x - lowpass(x)`` isolates oscillatory content; its
+        mean absolute value inside ``mask`` is the "systematic" error
+        term in the eps quotient.
+        """
+        ws = self.local_window
+        pad = ws // 2
+        ones_k = torch.ones(1, 1, ws, ws, device=x.device, dtype=x.dtype) / float(
+            ws * ws
+        )
+        lp = F.conv2d(x, ones_k, padding=pad)
+        hf = (x - lp).abs()
+        num = (hf * mask).sum(dim=(2, 3))
+        den = mask.sum(dim=(2, 3)).clamp(min=1.0)
+        return num / den  # (B, 1)
+
     def _compute_ringing_mask(self, img: torch.Tensor) -> torch.Tensor:
         """Compute ringing mask for a single image.
+
+        Uses the systematic-to-statistical error quotient ``eps`` adapted
+        from CT ring-artifact quantification:
+
+        .. math::
+
+            \\epsilon = \\frac{|\\overline{|hf|_{\\text{prox}}} -
+                               \\overline{|hf|_{\\text{bg}}}|}
+                              {\\sigma(hf_{\\text{bg}}) + \\varepsilon_0}
+
+        where ``hf = I - LP(I)`` is the high-pass residual, ``prox`` is
+        the edge-proximity mask, and ``bg`` is the complementary
+        background.  A region is flagged as containing ringing when
+        ``eps > epsilon_threshold`` AND the legacy variance ratio
+        agrees (keeps prior sensitivity as a soft lower bound).
 
         Parameters
         ----------
@@ -330,13 +417,22 @@ class GibbsRingingDetector(nn.Module):
         # 4. Background mask
         M_bg = 1.0 - E_dilated
 
-        # 5. Variance ratio
+        # 5. Variance ratio (legacy statistical test)
         var_prox = self._local_variance(lum, M_prox)  # (B, 1)
         var_bg = self._local_variance(lum, M_bg)  # (B, 1)
         ratio = var_prox / (var_bg + 1e-12)
 
-        # 6. Flag entire proximity zone if ratio > gamma
-        is_ringing = (ratio > self.variance_ratio_threshold).float()  # (B, 1)
+        # 6. eps = systematic-to-statistical error quotient
+        hp_prox = self._mean_abs_hf(lum, M_prox)  # (B, 1)
+        hp_bg = self._mean_abs_hf(lum, M_bg)  # (B, 1)
+        sigma_bg = var_bg.clamp(min=1e-12).sqrt()
+        eps = (hp_prox - hp_bg).abs() / (sigma_bg + 1e-8)
+
+        # 7. Flag if BOTH tests agree the proximity zone is anomalous.
+        is_ringing = (
+            (ratio > self.variance_ratio_threshold)
+            & (eps > self.epsilon_threshold)
+        ).float()  # (B, 1)
         ringing_mask = M_prox * is_ringing.unsqueeze(-1).unsqueeze(-1)
         return ringing_mask
 
@@ -382,47 +478,53 @@ _HAAR_FILTERS = torch.tensor(
 
 
 class NoiseDetector(nn.Module):
-    """Detect additive Gaussian noise via Haar HH-subband MAD.
+    """Detect additive Gaussian noise via multi-level Haar HH-subband MAD.
 
-    Applies a level-1 Haar wavelet transform to the luminance channel and
-    keeps the diagonal (``HH``) subband, which is dominated by stochastic
-    high-frequency energy rather than deterministic texture.  A spatial
-    noise-sigma map is estimated via a local median-absolute-deviation
-    (MAD) approximation (Donoho 1994):
+    Applies ``levels`` successive Haar wavelet decompositions to the
+    luminance channel.  At each level the LL approximation is recursed
+    into and the diagonal (``HH``) subband is kept.  Each HH subband is
+    converted to a per-pixel noise-sigma estimate by dividing the
+    absolute values by 0.6745 (the Donoho MAD constant) and smoothed
+    with a local box filter.  The per-level sigma maps are bilinearly
+    upsampled to full resolution and fused by taking the **maximum**,
+    which captures noise at whatever scale it dominates (single-pixel
+    speckle at level 1, coarser additive noise at levels 2-3).
 
-    .. math::
-
-        \\hat{\\sigma}(x, y) \\approx \\frac{|HH(x, y)|}{0.6745}
-
-    To isolate noise present in the target that is NOT already present in
-    the reference, the final mask is the (non-negative) difference
-    ``sigma_tgt - sigma_ref`` rescaled to ``[0, 1]``.
+    The final mask is the non-negative differential between target and
+    reference sigma maps, rescaled by ``noise_scale`` to ``[0, 1]``.
 
     Parameters
     ----------
     smoothing : int
-        Side length of the box filter applied to ``|HH|`` before the
-        difference; larger values average out single-pixel spikes and
-        give a more stable local noise estimate (default 5).
+        Side length of the box filter applied to ``|HH|`` before
+        differencing (default 5, must be odd).
     noise_scale : float
-        Divisor applied to the sigma estimate so that a typical JPEG
-        artifact / mild camera noise level produces mask values near
-        0.5 (default 0.04, corresponding to a sigma of ~10 on a 0-255
-        scale).  Tune for the expected noise magnitude in your inputs.
+        Divisor on the sigma estimate; a typical JPEG / mild camera
+        noise (sigma ~10 on a 0-255 scale ~= 0.04) maps to mask values
+        around 0.5 (default 0.04).
+    levels : int
+        Number of wavelet decomposition levels.  3 is the paper default
+        (Donoho & Johnstone 1994); level 1 captures the finest speckle,
+        levels 2-3 capture coarse additive noise (default 3).  Must be
+        >= 1.
     """
 
     def __init__(
         self,
         smoothing: int = 5,
         noise_scale: float = 0.04,
+        levels: int = 3,
     ) -> None:
         super().__init__()
         if smoothing < 1 or smoothing % 2 == 0:
             raise ValueError(
                 f"smoothing must be a positive odd integer; got {smoothing}"
             )
+        if levels < 1:
+            raise ValueError(f"levels must be >= 1; got {levels}")
         self.smoothing = smoothing
         self.noise_scale = float(noise_scale)
+        self.levels = int(levels)
         # Register the four Haar filters as a buffer so .to(device) moves them.
         self.register_buffer(
             "haar",
@@ -438,22 +540,38 @@ class NoiseDetector(nn.Module):
         return 0.299 * r + 0.587 * g + 0.114 * b
 
     def _sigma_map(self, img: torch.Tensor) -> torch.Tensor:
-        """Return a smoothed per-pixel noise-sigma estimate.
+        """Return a smoothed per-pixel noise-sigma estimate via multi-level DWT.
 
-        Shape: same as the input luminance (B, 1, H, W).
+        Fuses per-level sigma maps via element-wise max so noise at any
+        scale shows up in the final map.
+
+        Shape: same spatial dims as the input luminance (B, 1, H, W).
         """
         y = self._rgb_to_luminance(img)  # (B, 1, H, W)
-        # Level-1 Haar DWT, stride 2 -> (B, 4, H/2, W/2)
-        coeffs = F.conv2d(y, self.haar, stride=2)
-        hh = coeffs[:, 3:4]  # (B, 1, H/2, W/2)
-        abs_hh = hh.abs() / 0.6745  # Donoho MAD factor
-        # Local smoothing so the sigma estimate isn't a single-pixel map.
+        target_hw = y.shape[-2:]
         pad = self.smoothing // 2
-        abs_hh = F.conv2d(abs_hh, self.box, padding=pad)
-        # Bring back to input resolution.
-        return F.interpolate(
-            abs_hh, size=y.shape[-2:], mode="bilinear", align_corners=False
-        )
+
+        ll = y
+        fused: Optional[torch.Tensor] = None
+        for _lvl in range(self.levels):
+            # Pad to even dims so stride-2 conv stays clean.
+            if ll.shape[-2] % 2:
+                ll = F.pad(ll, (0, 0, 0, 1), mode="replicate")
+            if ll.shape[-1] % 2:
+                ll = F.pad(ll, (0, 1, 0, 0), mode="replicate")
+            if ll.shape[-1] < 2 or ll.shape[-2] < 2:
+                break
+            coeffs = F.conv2d(ll, self.haar, stride=2)
+            ll = coeffs[:, 0:1]  # LL for next level
+            hh = coeffs[:, 3:4]
+            sigma = hh.abs() / 0.6745  # Donoho MAD factor
+            sigma = F.conv2d(sigma, self.box, padding=pad)
+            sigma = F.interpolate(
+                sigma, size=target_hw, mode="bilinear", align_corners=False
+            )
+            fused = sigma if fused is None else torch.max(fused, sigma)
+        assert fused is not None
+        return fused
 
     def forward(
         self, ref: torch.Tensor, tgt: torch.Tensor
@@ -623,7 +741,7 @@ class SpatialHeuristicsEngine(nn.Module):
     def __init__(
         self,
         block_size: int = 8,
-        nfa_threshold: float = 0.35,
+        nfa_threshold: float = 1e-2,
         edge_threshold: float = 0.1,
         dilation_size: int = 5,
         variance_ratio_threshold: float = 2.0,
@@ -631,14 +749,21 @@ class SpatialHeuristicsEngine(nn.Module):
         noise_scale: float = 0.04,
         blur_sigma: float = 1.5,
         blur_smoothing: int = 7,
+        epsilon_threshold: float = 2.5,
+        wavelet_levels: int = 3,
     ) -> None:
         super().__init__()
         self.blocking = JPEGBlockingDetector(block_size, nfa_threshold)
         self.ringing = GibbsRingingDetector(
-            edge_threshold, dilation_size, variance_ratio_threshold
+            edge_threshold=edge_threshold,
+            dilation_size=dilation_size,
+            variance_ratio_threshold=variance_ratio_threshold,
+            epsilon_threshold=epsilon_threshold,
         )
         self.noise = NoiseDetector(
-            smoothing=noise_smoothing, noise_scale=noise_scale
+            smoothing=noise_smoothing,
+            noise_scale=noise_scale,
+            levels=wavelet_levels,
         )
         self.blur = BlurDetector(
             blur_sigma=blur_sigma, smoothing=blur_smoothing

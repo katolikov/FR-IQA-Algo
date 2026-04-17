@@ -220,6 +220,7 @@ class DeepStatisticalExtractor(nn.Module):
         pretrained: bool = True,
         sigmoid_gain: float = 5.0,
         sigmoid_bias: float = 1.0,
+        learnable_sigmoid: bool = True,
         weights_path: Optional[str | Path] = None,
     ) -> None:
         super().__init__()
@@ -228,8 +229,19 @@ class DeepStatisticalExtractor(nn.Module):
         )
         self.pool = L2HanningPool(kernel_size)
         self.kernel_size = kernel_size
-        self.sigmoid_gain = sigmoid_gain
-        self.sigmoid_bias = sigmoid_bias
+
+        # Sigmoid parameters mapping the A-DISTS dispersion index D to a
+        # texture probability P_tex = sigmoid(k * (D - b)).  The paper
+        # treats (k, b) as trainable — we store them as nn.Parameter by
+        # default so they can be fit by a downstream training loop (e.g.
+        # extending upiqal.suss_train), while preserving bit-identical
+        # inference behaviour until someone actually trains them.
+        if learnable_sigmoid:
+            self.sigmoid_gain = nn.Parameter(torch.tensor(float(sigmoid_gain)))
+            self.sigmoid_bias = nn.Parameter(torch.tensor(float(sigmoid_bias)))
+        else:
+            self.register_buffer("sigmoid_gain", torch.tensor(float(sigmoid_gain)))
+            self.register_buffer("sigmoid_bias", torch.tensor(float(sigmoid_bias)))
 
         # Build Hanning kernel for mean computation (non-L2)
         self.register_buffer("_hann", make_hanning_kernel(kernel_size))

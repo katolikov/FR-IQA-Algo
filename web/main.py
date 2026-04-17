@@ -600,6 +600,9 @@ async def compare(
     height: int = Form(0),
     pixel_format: str = Form("RGB888"),
     output_format: str = Form("png"),
+    score_mode: str = Form("sigmoid"),
+    pyramid: bool = Form(True),
+    feature_side: int = Form(256),
 ):
     """Compare two images using the real UPIQAL model.
 
@@ -646,11 +649,38 @@ async def compare(
 
     # Move tensors to model device
     model = get_model()
-    ref_on_device = ref_tensor.to(_device)
-    tgt_on_device = tgt_tensor.to(_device)
+    # Runtime-configurable toggles. score_mode is mutable on the model;
+    # pyramid only affects how we call forward().
+    if score_mode not in ("sigmoid", "nll"):
+        score_mode = "sigmoid"
+    model.score_mode = score_mode
 
-    # Run the real UPIQAL pipeline (all 5 modules)
-    result = model(ref_on_device, tgt_on_device)
+    # Full-resolution copies for Module 5 (heuristics). The feature-level
+    # tensors passed to Modules 1-4 are downsampled to `feature_side` on
+    # their longer side. When `pyramid` is False, the same tensor is used
+    # for both (legacy single-scale behaviour).
+    ref_full_on_device = ref_tensor.to(_device)
+    tgt_full_on_device = tgt_tensor.to(_device)
+    if pyramid and max(ref_tensor.shape[-2:]) > feature_side:
+        h, w = ref_tensor.shape[-2:]
+        scale = feature_side / float(max(h, w))
+        new_hw = (max(1, int(round(h * scale))), max(1, int(round(w * scale))))
+        ref_on_device = F.interpolate(
+            ref_full_on_device, size=new_hw,
+            mode="bicubic", align_corners=False, antialias=True,
+        ).clamp(0.0, 1.0)
+        tgt_on_device = F.interpolate(
+            tgt_full_on_device, size=new_hw,
+            mode="bicubic", align_corners=False, antialias=True,
+        ).clamp(0.0, 1.0)
+        result = model(
+            ref_on_device, tgt_on_device,
+            ref_full=ref_full_on_device, tgt_full=tgt_full_on_device,
+        )
+    else:
+        ref_on_device = ref_full_on_device
+        tgt_on_device = tgt_full_on_device
+        result = model(ref_on_device, tgt_on_device)
 
     score = float(result["score"][0].item())
     diag = result["diagnostic_tensor"]  # (1, 5, H, W)

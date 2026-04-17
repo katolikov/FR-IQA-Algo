@@ -87,24 +87,51 @@ class UPIQAL(nn.Module):
         w_heuristic: float = 0.1,
         score_scale: float = 10.0,
         score_center: float = 0.2,
+        score_mode: str = "sigmoid",
+        learnable_aggregation: bool = True,
         vgg_weights_path: Union[str, Path, None] = None,
         uncertainty_parameterization: str = "diagonal",
         uncertainty_weights: Union[str, Path, None] = None,
     ) -> None:
         super().__init__()
 
-        # Learnable / tunable aggregation weights
         self.alpha = alpha
         self.beta = beta
-        self.w_color = w_color
-        self.w_anomaly = w_anomaly
-        self.w_structure = w_structure
-        self.w_heuristic = w_heuristic
-        # Score calibration (matches upiqal_cli.run_pipeline): without the
-        # scale/center, identity inputs map to sigmoid(0.5) ≈ 0.62 instead of
-        # the expected 0.9526 upper bound.
-        self.score_scale = score_scale
-        self.score_center = score_center
+
+        # Aggregation weights.  The paper describes a "fully connected
+        # regression head that aggregates the weighted sums of local
+        # log-probabilities".  We implement that as four learnable
+        # scalars (nn.Parameter) initialised to the legacy hand-tuned
+        # values, so inference is bit-identical until someone trains
+        # them; legacy float behaviour is restored by passing
+        # learnable_aggregation=False.
+        if learnable_aggregation:
+            self.w_color = nn.Parameter(torch.tensor(float(w_color)))
+            self.w_anomaly = nn.Parameter(torch.tensor(float(w_anomaly)))
+            self.w_structure = nn.Parameter(torch.tensor(float(w_structure)))
+            self.w_heuristic = nn.Parameter(torch.tensor(float(w_heuristic)))
+            self.score_scale = nn.Parameter(torch.tensor(float(score_scale)))
+            self.score_center = nn.Parameter(torch.tensor(float(score_center)))
+        else:
+            self.w_color = w_color
+            self.w_anomaly = w_anomaly
+            self.w_structure = w_structure
+            self.w_heuristic = w_heuristic
+            self.score_scale = score_scale
+            self.score_center = score_center
+
+        # score_mode: "sigmoid" (legacy, keeps current calibration) or
+        # "nll" (paper-style "negative sum of log-probabilities normalised
+        # to [0,1]").  The NLL mode maps log-probability-like signals
+        # (anomaly, color-EMD, 1 - structure, heuristic penalty) through
+        # an exponentially-decaying transformation, producing a score in
+        # [0, 1] whose tail distribution more closely matches the paper's
+        # prescription without requiring sigmoid re-calibration.
+        if score_mode not in ("sigmoid", "nll"):
+            raise ValueError(
+                f"score_mode must be 'sigmoid' or 'nll'; got {score_mode!r}"
+            )
+        self.score_mode = score_mode
 
         # Sub-modules
         self.normalizer = Normalizer(mode=norm_mode)
@@ -195,27 +222,31 @@ class UPIQAL(nn.Module):
         self,
         ref: torch.Tensor,
         tgt: torch.Tensor,
+        ref_full: Optional[torch.Tensor] = None,
+        tgt_full: Optional[torch.Tensor] = None,
     ) -> Dict[str, Any]:
         """Run the full UPIQAL pipeline.
 
         Parameters
         ----------
-        ref : torch.Tensor
-            Reference image ``(B, 3, H, W)`` in ``[0, 1]``.
-        tgt : torch.Tensor
-            Distorted target image ``(B, 3, H, W)`` in ``[0, 1]``.
+        ref, tgt : torch.Tensor
+            Reference / distorted images ``(B, 3, H, W)`` in ``[0, 1]``.
+            These are the deep-feature-level tensors (per the paper's
+            Phase 1, typically downsampled to ~256 px on the longer side
+            so VGG16 sees the expected spatial frequencies).
+        ref_full, tgt_full : torch.Tensor, optional
+            Full-resolution copies ``(B, 3, H', W')`` to feed Module 5
+            (spatial heuristics).  When omitted, the heuristics run on
+            ``ref`` / ``tgt`` at the same resolution as the rest of the
+            pipeline (legacy behaviour).
 
         Returns
         -------
         dict
-            ``"score"`` : scalar FR-IQA quality score in ``[0, 1]``
-                          (1 = perfect, 0 = worst).
-            ``"diagnostic_tensor"`` : ``(B, 5, H, W)`` multi-channel mask:
-                - channel 0: Global Anomaly Map (continuous)
-                - channel 1: Color Degradation Map (continuous)
-                - channel 2: Deep Similarity Map (continuous)
-                - channel 3: Blocking Mask (binary)
-                - channel 4: Ringing Mask (binary)
+            ``"score"`` : scalar FR-IQA quality score in ``[0, 1]``.
+            ``"diagnostic_tensor"`` : ``(B, 7, H, W)``; channels are
+                0 anomaly, 1 color, 2 structure, 3 blocking, 4 ringing,
+                5 noise, 6 blur.
         """
         B, C, H, W = ref.shape
 
@@ -241,11 +272,25 @@ class UPIQAL(nn.Module):
             deep_out["residuals"], target_size=(H, W)
         )  # (B,1,H,W)
 
-        # ---- Module 5: Spatial Heuristics (on raw images) ----
-        # Differential detectors need both ref and tgt: blocking uses the
-        # ref modulo-8 grid energy as a baseline; ringing compares variance
-        # excess near edges in both images.
-        heur = self.heuristics(ref_raw, tgt_raw)
+        # ---- Module 5: Spatial Heuristics ----
+        # Multi-scale pyramid: if full-resolution copies are supplied,
+        # heuristics run at native resolution and the masks are then
+        # downsampled back to the pipeline (H, W).  Otherwise the
+        # pyramid-level tensors are used directly.
+        if ref_full is not None and tgt_full is not None:
+            heur = self.heuristics(ref_full, tgt_full)
+            heur = {
+                k: (
+                    v
+                    if v.shape[-2:] == (H, W)
+                    else F.interpolate(
+                        v, size=(H, W), mode="bilinear", align_corners=False
+                    )
+                )
+                for k, v in heur.items()
+            }
+        else:
+            heur = self.heuristics(ref_raw, tgt_raw)
         blocking_mask = heur["blocking_mask"]  # (B,1,H,W)
         ringing_mask = heur["ringing_mask"]  # (B,1,H,W)
         noise_mask = heur["noise_mask"]  # (B,1,H,W)
@@ -275,20 +320,44 @@ class UPIQAL(nn.Module):
         # Heuristic penalty: fraction of pixels flagged
         heur_penalty = (blocking_mask + ringing_mask).clamp(0.0, 1.0).mean(dim=(2, 3))  # (B,1)
 
-        # Final score: weighted combination (higher = better)
-        # deep_sim is similarity (higher=better), anomaly_norm is distance (lower=better)
-        score_spatial = (
-            self.w_structure * deep_sim
-            - self.w_anomaly * anomaly_norm
-            - self.w_color * color_norm
-        )
-        score_per_pixel = score_spatial.mean(dim=(2, 3))  # (B,1)
-        score = (
-            self.score_scale * (score_per_pixel - self.score_center)
-            - self.w_heuristic * heur_penalty
-        )
-        # Clamp and shift to [0,1]
-        score = torch.sigmoid(score).squeeze(1)  # (B,)
+        if self.score_mode == "sigmoid":
+            # Legacy calibration (self-comparison -> ~0.9526, different
+            # images -> ~0.85, cartoon -> ~0.72).  Weighted sum of mean
+            # per-pixel similarity / dissimilarity signals, passed through
+            # a calibrated sigmoid.
+            score_spatial = (
+                self.w_structure * deep_sim
+                - self.w_anomaly * anomaly_norm
+                - self.w_color * color_norm
+            )
+            score_per_pixel = score_spatial.mean(dim=(2, 3))  # (B,1)
+            score = (
+                self.score_scale * (score_per_pixel - self.score_center)
+                - self.w_heuristic * heur_penalty
+            )
+            score = torch.sigmoid(score).squeeze(1)  # (B,)
+        else:  # "nll"
+            # Paper prescription: negative sum of log-probabilities across
+            # all perceptual components and spatial locations, normalised
+            # to [0, 1].  We treat each per-pixel dissimilarity channel as
+            # an empirical -log p of the target feature under the
+            # reference distribution; their sum is an aggregate NLL, and
+            # exp(-NLL / score_scale) maps [0, inf) to (0, 1] as the
+            # canonical normalisation.  Self-comparison (all dissimilarity
+            # signals ~ 0) -> score ~ 1; increasingly different images ->
+            # exponentially-decaying score.
+            nll_spatial = (
+                self.w_anomaly * anomaly_norm
+                + self.w_color * color_norm
+                + self.w_structure * (1.0 - deep_sim)
+            )
+            nll_mean = nll_spatial.mean(dim=(2, 3))  # (B, 1)
+            total_nll = nll_mean + self.w_heuristic * heur_penalty
+            # score_scale acts as an inverse temperature: larger values
+            # sharpen the mapping so moderate NLL already drags the score
+            # visibly below 1.
+            score = torch.exp(-self.score_scale * total_nll).squeeze(1)
+            score = score.clamp(0.0, 1.0)
 
         # Diagnostic tensor: 7 channels.
         # Channel layout (indexed downstream by the CLI and web frontend):
