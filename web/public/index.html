@@ -183,6 +183,27 @@
             <option value="nv21">NV21 (YUV420SP)</option>
           </select>
         </div>
+        <div class="run-bar__group">
+          <label class="field__label" for="score-mode">Score mode</label>
+          <select id="score-mode" class="field__select" title="Score normalisation formula. 'sigmoid' = legacy calibrated score; 'nll' = paper's exp(-score_scale * total_nll) mapping.">
+            <option value="sigmoid">Sigmoid (default)</option>
+            <option value="nll">NLL (paper)</option>
+          </select>
+        </div>
+        <div class="run-bar__group">
+          <label class="field__label" for="feature-side">Feature side</label>
+          <select id="feature-side" class="field__select" title="Longer-side (px) of the deep-feature pyramid level used by Modules 1-4. Module 5 (heuristics) always runs at full resolution.">
+            <option value="256">256 (paper)</option>
+            <option value="384">384</option>
+            <option value="512">512</option>
+          </select>
+        </div>
+        <div class="run-bar__group">
+          <label class="field__checkbox" title="When on, Module 5 (blocking/ringing/noise/blur) runs on the full-resolution image while Modules 1-4 use the 'Feature side' downsample. Disabling this forces single-scale (legacy) behaviour.">
+            <input type="checkbox" id="pyramid" checked>
+            <span>Multi-scale pyramid</span>
+          </label>
+        </div>
         <button id="btn-run" class="btn btn--primary" disabled>
           <svg id="btn-spinner" class="spinner is-hidden"><use href="/static/icons.svg#icon-spinner"/></svg>
           <span id="btn-label">Run UPIQAL Analysis</span>

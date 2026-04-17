@@ -327,6 +327,13 @@ btnRun.addEventListener('click', async () => {
     form.append('height', $('raw-height').value || '0');
     form.append('pixel_format', $('raw-pixel-format').value);
     form.append('output_format', $('output-format').value);
+    // Advanced options wired to the CLI flags. Defaults match the CLI.
+    const scoreModeEl = $('score-mode');
+    if (scoreModeEl) form.append('score_mode', scoreModeEl.value || 'sigmoid');
+    const pyramidEl = $('pyramid');
+    if (pyramidEl) form.append('pyramid', pyramidEl.checked ? 'true' : 'false');
+    const featureSideEl = $('feature-side');
+    if (featureSideEl) form.append('feature_side', featureSideEl.value || '256');
 
     const res = await fetch(api('/api/compare'), { method: 'POST', body: form });
     if (!res.ok) throw new Error(`Server ${res.status}: ${await res.text()}`);

@@ -180,6 +180,15 @@ main { position: relative; z-index: 1; }
 .run-bar__group { display: inline-flex; align-items: center; gap: 10px; }
 .run-bar__group .field__label { margin: 0; }
 .run-bar__group .field__select { width: auto; min-width: 160px; }
+.field__checkbox {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-weight: 500; cursor: pointer; user-select: none;
+  margin: 0;
+}
+.field__checkbox input[type="checkbox"] {
+  width: 16px; height: 16px; accent-color: var(--c-brand, #7A3731);
+  cursor: pointer;
+}
 
 /* Spinner */
 .spinner {
