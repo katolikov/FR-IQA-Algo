@@ -42,6 +42,8 @@ thumbnail: "https://raw.githubusercontent.com/katolikov/FR-IQA-Algo/main/docs/ex
 Image Quality Assessment with spatially precise diagnostics for JPEG
 blocking, Gibbs ringing, Gaussian noise, blur, and chromatic transport.
 
+The interactive demo frontend is served at
+**[upiqal.qpon](https://upiqal.qpon)** (Vercel, routes `/api/*` here).
 Source code, CLI, training pipeline, and algorithm write-up live on
 GitHub: **[katolikov/FR-IQA-Algo](https://github.com/katolikov/FR-IQA-Algo)**.
 

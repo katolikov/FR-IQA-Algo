@@ -10,6 +10,13 @@
 </p>
 
 <p align="center">
+  <a href="https://upiqal.qpon">
+    <img
+      alt="Live demo at upiqal.qpon"
+      src="https://img.shields.io/badge/live-upiqal.qpon-7A3731?style=for-the-badge"
+    />
+  </a>
+  &nbsp;
   <a href="https://huggingface.co/spaces/katolikov/upiqal-eval">
     <img
       alt="Open in Hugging Face Spaces"
@@ -26,9 +33,14 @@
 </p>
 
 <p align="center">
+  <a href="https://upiqal.qpon"><strong>Try it live &rarr; upiqal.qpon</strong></a>
+</p>
+
+<p align="center">
   <a href="#quick-start">Quick Start</a> ·
   <a href="#web-ui">Web UI</a> ·
   <a href="#algorithm-formulation-upiqal">Algorithm</a> ·
+  <a href="https://upiqal.qpon">Live Demo</a> ·
   <a href="https://huggingface.co/spaces/katolikov/upiqal-eval">HF Space</a>
 </p>
 
