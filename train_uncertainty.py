@@ -146,6 +146,17 @@ def main() -> int:
             "with --data-dir.  Useful for mixing BSDS500 + COCO etc."
         ),
     )
+    parser.add_argument(
+        "--resume-from", type=Path, default=None,
+        help=(
+            "Path to an existing Cholesky checkpoint (.pth) produced by a "
+            "previous training run.  When set, the model weights are "
+            "loaded before optimisation starts and training continues "
+            "from that point.  The Adam optimiser / LR scheduler are "
+            "re-initialised, so this is 'warm-start' fine-tuning, not a "
+            "strict resume — pick a smaller --lr accordingly."
+        ),
+    )
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -173,6 +184,26 @@ def main() -> int:
     # Freeze VGG (already frozen internally, but belt-and-suspenders).
     for p in deep_stats.parameters():
         p.requires_grad_(False)
+
+    # Optional warm-start from a previously-trained Cholesky factor.
+    if args.resume_from is not None:
+        if not args.resume_from.is_file():
+            raise SystemExit(
+                f"--resume-from path does not exist: {args.resume_from}"
+            )
+        ckpt = torch.load(
+            str(args.resume_from), map_location=device, weights_only=True
+        )
+        state = ckpt["state_dict"] if isinstance(ckpt, dict) and "state_dict" in ckpt else ckpt
+        missing, unexpected = uncertainty.load_state_dict(state, strict=False)
+        print(
+            f"[train] resumed from {args.resume_from} "
+            f"(missing={len(missing)}, unexpected={len(unexpected)})"
+        )
+        if missing:
+            print(f"[train]   missing keys: {missing[:5]}" + (" ..." if len(missing) > 5 else ""))
+        if unexpected:
+            print(f"[train]   unexpected keys: {unexpected[:5]}" + (" ..." if len(unexpected) > 5 else ""))
 
     optim = torch.optim.Adam(uncertainty.parameters(), lr=args.lr)
     augment = ImperceptibleAugment(AugmentConfig())
@@ -228,7 +259,10 @@ def main() -> int:
             "batch_size": args.batch_size,
             "crop": args.crop,
             "lr": args.lr,
+            "lr_schedule": args.lr_schedule,
+            "lr_min": args.lr_min,
             "init_scale": args.init_scale,
+            "resumed_from": str(args.resume_from) if args.resume_from else None,
         },
         "history": history,
     }
