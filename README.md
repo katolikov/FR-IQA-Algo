@@ -140,26 +140,6 @@ Hot regions on the UPIQAL maps align with the circled locations (missing goblet 
 
 ---
 
-## UI Design · Samsung Monochrome Palette
-
-The interface uses a strict 9-step greyscale ramp from pure-black tiles to pure-white accents. Intensity (not hue) encodes severity, matching the device-UI aesthetic of Samsung's One UI.
-
-|   | Token | Hex | Role |
-|:-:|:-|:-|:-|
-| <img src="docs/palette/09090b.png" width="28" height="28" /> | `surface-0`        | `#09090b` | Page background |
-| <img src="docs/palette/18181b.png" width="28" height="28" /> | `surface-1`        | `#18181b` | Card surface |
-| <img src="docs/palette/27272a.png" width="28" height="28" /> | `surface-2`        | `#27272a` | Raised / hairline-strong · chips |
-| <img src="docs/palette/3f3f46.png" width="28" height="28" /> | `hairline-strong`  | `#3f3f46` | Border · inactive slider track |
-| <img src="docs/palette/71717a.png" width="28" height="28" /> | `text-muted`       | `#71717a` | Muted text · eyebrow labels |
-| <img src="docs/palette/a1a1aa.png" width="28" height="28" /> | `ink-400`          | `#a1a1aa` | Secondary text |
-| <img src="docs/palette/d4d4d8.png" width="28" height="28" /> | `ink-300`          | `#d4d4d8` | Light divider |
-| <img src="docs/palette/fafafa.png" width="28" height="28" /> | `text-primary`     | `#fafafa` | Primary text |
-| <img src="docs/palette/ffffff.png" width="28" height="28" /> | `accent`           | `#ffffff` | Pure white CTA · overlay thumb |
-
-Typography: [Inter](https://rsms.me/inter/) (400 / 500 / 600 / 700 / 800). Icon: monochrome "U" glyph over a 14-px-rounded black tile with a single white locator-pin accent (see `web/static/favicon.svg`).
-
----
-
 ## State-of-the-Art Review
 
 The objective evaluation of image quality and the automated, spatially precise detection of visual artifacts remain among the most complex challenges in computational vision. Historically, the assessment of image fidelity relied on human visual inspection, formalized through the Mean Opinion Score (MOS) framework. However, the subjective nature, high cost, and inherent unscalability of MOS have driven the necessity for robust, 100% automated, and data-driven computational models.
