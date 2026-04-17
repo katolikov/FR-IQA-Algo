@@ -4,6 +4,9 @@ Implements vectorized detection of:
 - JPEG blocking artifacts (modulo-8 cross-difference filters + NFA)
 - Gibbs ringing artifacts (Sobel edge detection + morphological dilation +
   variance ratio thresholding)
+- Additive Gaussian noise (Haar wavelet HH-subband + Donoho MAD estimator)
+- Blur / loss of detail (high-frequency energy attenuation in target vs
+  reference, i.e. edge-spread)
 """
 
 from __future__ import annotations
@@ -362,25 +365,259 @@ class GibbsRingingDetector(nn.Module):
 
 
 # ======================================================================
+# Additive Gaussian Noise Detector (wavelet MAD)
+# ======================================================================
+
+
+# Haar wavelet filters (2x2).  Scaled by 1/2 so that applying them to a
+# constant image returns 0 in the detail subbands.
+_HAAR_FILTERS = torch.tensor(
+    [
+        [[1.0, 1.0], [1.0, 1.0]],    # LL (approximation)
+        [[1.0, 1.0], [-1.0, -1.0]],  # LH (horizontal detail)
+        [[1.0, -1.0], [1.0, -1.0]],  # HL (vertical detail)
+        [[1.0, -1.0], [-1.0, 1.0]],  # HH (diagonal detail -> noise signature)
+    ]
+) * 0.5
+
+
+class NoiseDetector(nn.Module):
+    """Detect additive Gaussian noise via Haar HH-subband MAD.
+
+    Applies a level-1 Haar wavelet transform to the luminance channel and
+    keeps the diagonal (``HH``) subband, which is dominated by stochastic
+    high-frequency energy rather than deterministic texture.  A spatial
+    noise-sigma map is estimated via a local median-absolute-deviation
+    (MAD) approximation (Donoho 1994):
+
+    .. math::
+
+        \\hat{\\sigma}(x, y) \\approx \\frac{|HH(x, y)|}{0.6745}
+
+    To isolate noise present in the target that is NOT already present in
+    the reference, the final mask is the (non-negative) difference
+    ``sigma_tgt - sigma_ref`` rescaled to ``[0, 1]``.
+
+    Parameters
+    ----------
+    smoothing : int
+        Side length of the box filter applied to ``|HH|`` before the
+        difference; larger values average out single-pixel spikes and
+        give a more stable local noise estimate (default 5).
+    noise_scale : float
+        Divisor applied to the sigma estimate so that a typical JPEG
+        artifact / mild camera noise level produces mask values near
+        0.5 (default 0.04, corresponding to a sigma of ~10 on a 0-255
+        scale).  Tune for the expected noise magnitude in your inputs.
+    """
+
+    def __init__(
+        self,
+        smoothing: int = 5,
+        noise_scale: float = 0.04,
+    ) -> None:
+        super().__init__()
+        if smoothing < 1 or smoothing % 2 == 0:
+            raise ValueError(
+                f"smoothing must be a positive odd integer; got {smoothing}"
+            )
+        self.smoothing = smoothing
+        self.noise_scale = float(noise_scale)
+        # Register the four Haar filters as a buffer so .to(device) moves them.
+        self.register_buffer(
+            "haar",
+            _HAAR_FILTERS.unsqueeze(1).clone(),  # (4, 1, 2, 2)
+        )
+        # Box filter for local smoothing of |HH|.
+        box = torch.ones(1, 1, smoothing, smoothing) / float(smoothing * smoothing)
+        self.register_buffer("box", box)
+
+    @staticmethod
+    def _rgb_to_luminance(x: torch.Tensor) -> torch.Tensor:
+        r, g, b = x[:, 0:1], x[:, 1:2], x[:, 2:3]
+        return 0.299 * r + 0.587 * g + 0.114 * b
+
+    def _sigma_map(self, img: torch.Tensor) -> torch.Tensor:
+        """Return a smoothed per-pixel noise-sigma estimate.
+
+        Shape: same as the input luminance (B, 1, H, W).
+        """
+        y = self._rgb_to_luminance(img)  # (B, 1, H, W)
+        # Level-1 Haar DWT, stride 2 -> (B, 4, H/2, W/2)
+        coeffs = F.conv2d(y, self.haar, stride=2)
+        hh = coeffs[:, 3:4]  # (B, 1, H/2, W/2)
+        abs_hh = hh.abs() / 0.6745  # Donoho MAD factor
+        # Local smoothing so the sigma estimate isn't a single-pixel map.
+        pad = self.smoothing // 2
+        abs_hh = F.conv2d(abs_hh, self.box, padding=pad)
+        # Bring back to input resolution.
+        return F.interpolate(
+            abs_hh, size=y.shape[-2:], mode="bilinear", align_corners=False
+        )
+
+    def forward(
+        self, ref: torch.Tensor, tgt: torch.Tensor
+    ) -> torch.Tensor:
+        """Return the differential noise mask ``(B, 1, H, W)`` in ``[0, 1]``.
+
+        0 means "no more noise in target than reference" and 1 means "a lot
+        of extra noise at this location".
+        """
+        if ref.shape != tgt.shape:
+            raise ValueError(
+                f"ref and tgt shapes must match: {tuple(ref.shape)} vs "
+                f"{tuple(tgt.shape)}"
+            )
+        sigma_ref = self._sigma_map(ref)
+        sigma_tgt = self._sigma_map(tgt)
+        excess = (sigma_tgt - sigma_ref).clamp(min=0.0) / max(
+            self.noise_scale, 1e-6
+        )
+        return excess.clamp(0.0, 1.0)
+
+
+# ======================================================================
+# Blur / Loss-of-Detail Detector (edge-spread / HF attenuation)
+# ======================================================================
+
+
+class BlurDetector(nn.Module):
+    """Detect generalized blur by measuring high-frequency energy loss.
+
+    For each image we compute a local high-frequency energy map
+
+    .. math::
+
+        E(x, y) = \\mathrm{box}( (I - G_\\sigma * I)^2 )
+
+    where ``G_\\sigma`` is a small Gaussian kernel.  The target-to-reference
+    ratio ``E_t / E_r`` drops below 1 exactly where the target has lost
+    spatial detail relative to the reference (i.e. blur).  The final mask
+    is ``clamp(1 - E_t / E_r, 0, 1)`` so that 0 = "no detail lost" and 1 =
+    "target is completely smoothed out at this location".
+
+    This is the dedicated, spatially-precise complement to the generic
+    ``(1 - deep_similarity)`` proxy previously used as the blur severity
+    signal in the CLI.
+
+    Parameters
+    ----------
+    blur_sigma : float
+        Sigma of the internal Gaussian used to extract the low-pass
+        component (default 1.5 px).
+    smoothing : int
+        Box-filter side length applied to the squared residual so the HF
+        energy map is spatially smooth (default 7).
+    min_ref_energy : float
+        Floor on the reference HF energy below which the ratio is not
+        evaluated (pixels in flat regions don't carry a meaningful blur
+        signal; default 1e-4).
+    """
+
+    def __init__(
+        self,
+        blur_sigma: float = 1.5,
+        smoothing: int = 7,
+        min_ref_energy: float = 1e-4,
+    ) -> None:
+        super().__init__()
+        if smoothing < 1 or smoothing % 2 == 0:
+            raise ValueError(
+                f"smoothing must be a positive odd integer; got {smoothing}"
+            )
+        self.min_ref_energy = float(min_ref_energy)
+        k = _gaussian_kernel_2d(blur_sigma)  # (K, K)
+        self.register_buffer(
+            "gaussian",
+            k.view(1, 1, k.shape[0], k.shape[1]).contiguous(),
+        )
+        box = torch.ones(1, 1, smoothing, smoothing) / float(smoothing * smoothing)
+        self.register_buffer("box", box)
+
+    @staticmethod
+    def _rgb_to_luminance(x: torch.Tensor) -> torch.Tensor:
+        r, g, b = x[:, 0:1], x[:, 1:2], x[:, 2:3]
+        return 0.299 * r + 0.587 * g + 0.114 * b
+
+    def _hf_energy(self, img: torch.Tensor) -> torch.Tensor:
+        y = self._rgb_to_luminance(img)  # (B, 1, H, W)
+        k = self.gaussian
+        pad = k.shape[-1] // 2
+        lo = F.conv2d(y, k, padding=pad)
+        hf = (y - lo).pow(2)
+        pad_b = self.box.shape[-1] // 2
+        return F.conv2d(hf, self.box, padding=pad_b)
+
+    def forward(
+        self, ref: torch.Tensor, tgt: torch.Tensor
+    ) -> torch.Tensor:
+        """Return the differential blur mask ``(B, 1, H, W)`` in ``[0, 1]``.
+
+        0 means "target is at least as detailed as reference" and 1 means
+        "target has completely lost detail at this location".
+        """
+        if ref.shape != tgt.shape:
+            raise ValueError(
+                f"ref and tgt shapes must match: {tuple(ref.shape)} vs "
+                f"{tuple(tgt.shape)}"
+            )
+        e_ref = self._hf_energy(ref)
+        e_tgt = self._hf_energy(tgt)
+        # Stabilize the ratio by clamping the denominator rather than
+        # adding an epsilon — that way, in valid regions where
+        # ``e_ref == e_tgt``, the ratio is exactly 1.0 and the mask is
+        # exactly 0 (important for self-comparison bit-parity tests).
+        denom = e_ref.clamp(min=self.min_ref_energy)
+        ratio = e_tgt / denom
+        blur = (1.0 - ratio).clamp(0.0, 1.0)
+        # Flat regions in the reference (below min_ref_energy) carry no
+        # meaningful blur signal; mask them out entirely.
+        valid = (e_ref > self.min_ref_energy).to(blur.dtype)
+        return blur * valid
+
+
+def _gaussian_kernel_2d(sigma: float) -> torch.Tensor:
+    """Return a (K, K) Gaussian kernel with ``K = 2*ceil(3*sigma) + 1``."""
+    import math as _math
+
+    radius = max(1, int(_math.ceil(3.0 * sigma)))
+    coords = torch.arange(-radius, radius + 1, dtype=torch.float32)
+    g1 = torch.exp(-0.5 * (coords / max(sigma, 1e-6)) ** 2)
+    g1 = g1 / g1.sum()
+    return torch.outer(g1, g1)
+
+
+# ======================================================================
 # Combined heuristics module
 # ======================================================================
 
 
 class SpatialHeuristicsEngine(nn.Module):
-    """Combines JPEG blocking and Gibbs ringing detection.
+    """Combines JPEG blocking, Gibbs ringing, noise, and blur detection.
 
     Parameters
     ----------
     block_size : int
         DCT block size (default 8).
     nfa_threshold : float
-        NFA threshold for blocking detection (default 0.01).
+        NFA threshold for blocking detection (default 0.35).
     edge_threshold : float
         Sobel threshold for ringing detection (default 0.1).
     dilation_size : int
         Morphological dilation kernel size (default 5).
     variance_ratio_threshold : float
         Variance ratio gamma for ringing (default 2.0).
+    noise_smoothing : int
+        Side length of the box filter for the noise sigma estimator
+        (default 5, must be odd).
+    noise_scale : float
+        Divisor on the estimated sigma; smaller = more sensitive to noise
+        (default 0.04).
+    blur_sigma : float
+        Sigma of the low-pass filter in the blur detector (default 1.5).
+    blur_smoothing : int
+        Side length of the box filter for the HF energy map (default 7,
+        must be odd).
     """
 
     def __init__(
@@ -390,17 +627,27 @@ class SpatialHeuristicsEngine(nn.Module):
         edge_threshold: float = 0.1,
         dilation_size: int = 5,
         variance_ratio_threshold: float = 2.0,
+        noise_smoothing: int = 5,
+        noise_scale: float = 0.04,
+        blur_sigma: float = 1.5,
+        blur_smoothing: int = 7,
     ) -> None:
         super().__init__()
         self.blocking = JPEGBlockingDetector(block_size, nfa_threshold)
         self.ringing = GibbsRingingDetector(
             edge_threshold, dilation_size, variance_ratio_threshold
         )
+        self.noise = NoiseDetector(
+            smoothing=noise_smoothing, noise_scale=noise_scale
+        )
+        self.blur = BlurDetector(
+            blur_sigma=blur_sigma, smoothing=blur_smoothing
+        )
 
     def forward(
         self, ref: torch.Tensor, tgt: torch.Tensor
     ) -> dict[str, torch.Tensor]:
-        """Run both artifact detectors.
+        """Run all four artifact detectors.
 
         Parameters
         ----------
@@ -412,9 +659,12 @@ class SpatialHeuristicsEngine(nn.Module):
         Returns
         -------
         dict[str, torch.Tensor]
-            ``"blocking_mask"`` and ``"ringing_mask"``, each ``(B, 1, H, W)``.
+            ``blocking_mask``, ``ringing_mask``, ``noise_mask``,
+            ``blur_mask``, each ``(B, 1, H, W)``.
         """
         return {
             "blocking_mask": self.blocking(ref, tgt),
             "ringing_mask": self.ringing(ref, tgt),
+            "noise_mask": self.noise(ref, tgt),
+            "blur_mask": self.blur(ref, tgt),
         }

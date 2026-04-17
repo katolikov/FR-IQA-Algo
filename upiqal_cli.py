@@ -521,6 +521,8 @@ def compute_diagnostics(
     ringing_mask: torch.Tensor,
     ref_raw: torch.Tensor = None,
     tgt_raw: torch.Tensor = None,
+    noise_mask: torch.Tensor = None,
+    blur_mask: torch.Tensor = None,
 ) -> Dict[str, Any]:
     """Compute artifact severity scores, dominant artifact, and affected area.
 
@@ -553,9 +555,18 @@ def compute_diagnostics(
     # Raw severity percentages (pre-multiplier, per-pixel mean)
     blocking_sev = float(blocking_mask.mean().item()) * 100
     ringing_sev = float(ringing_mask.mean().item()) * 100
-    noise_sev = float(anomaly_norm.mean().item()) * 100
     color_sev = float(color_norm.mean().item()) * 100
-    blur_sev = float((1.0 - deep_sim).mean().item()) * 100
+    # Prefer the dedicated wavelet / edge-spread detectors when available;
+    # fall back to the legacy proxies (anomaly_norm / deep_sim) so older
+    # callers still get a sane answer.
+    if noise_mask is not None:
+        noise_sev = float(noise_mask.mean().item()) * 100
+    else:
+        noise_sev = float(anomaly_norm.mean().item()) * 100
+    if blur_mask is not None:
+        blur_sev = float(blur_mask.mean().item()) * 100
+    else:
+        blur_sev = float((1.0 - deep_sim).mean().item()) * 100
 
     # Display severities: scale by perceptual multipliers and clamp at 100.
     # These numbers go into the report/UI and are NOT used for argmax below.
@@ -812,6 +823,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
         heur = heuristics(ref_raw, tgt_raw)
     blocking_mask = heur["blocking_mask"]  # (B, 1, H, W)
     ringing_mask = heur["ringing_mask"]    # (B, 1, H, W)
+    noise_mask = heur["noise_mask"]        # (B, 1, H, W)
+    blur_mask = heur["blur_mask"]          # (B, 1, H, W)
     dt = time.perf_counter() - t0
     print(f"[5/5] Spatial Heuristics  ... done ({dt:.2f}s)")
 
@@ -863,6 +876,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
     diagnostics = compute_diagnostics(
         anomaly_norm, color_norm, deep_sim, blocking_mask, ringing_mask,
         ref_raw=ref_raw, tgt_raw=tgt_raw,
+        noise_mask=noise_mask, blur_mask=blur_mask,
     )
 
     # ── Print summary ───────────────────────────────────────────────
