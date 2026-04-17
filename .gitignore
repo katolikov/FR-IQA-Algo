@@ -46,3 +46,9 @@ __pycache__/
 
 # FR-IQA validation suite outputs
 analysis/
+upiqal_*/
+upiqal_web_*.png
+
+# Local-only artifacts (large or machine-specific)
+.DS_Store
+weights/*.pth

@@ -96,10 +96,21 @@ def get_model() -> UPIQAL:
     """
     global _model
     if _model is None:
-        _model = UPIQAL(pretrained_vgg=True)
+        uncertainty_weights = os.environ.get("UPIQAL_UNCERTAINTY_WEIGHTS") or None
+        if uncertainty_weights:
+            _model = UPIQAL(
+                pretrained_vgg=True,
+                uncertainty_parameterization="blockdiag",
+                uncertainty_weights=uncertainty_weights,
+            )
+        else:
+            _model = UPIQAL(pretrained_vgg=True)
         _model.to(_device)
         _model.eval()
-        print(f"UPIQAL model loaded on {_device}")
+        msg = f"UPIQAL model loaded on {_device}"
+        if uncertainty_weights:
+            msg += f" (uncertainty weights: {uncertainty_weights})"
+        print(msg)
     return _model
 
 

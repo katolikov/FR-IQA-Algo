@@ -88,6 +88,8 @@ class UPIQAL(nn.Module):
         score_scale: float = 10.0,
         score_center: float = 0.2,
         vgg_weights_path: Union[str, Path, None] = None,
+        uncertainty_parameterization: str = "diagonal",
+        uncertainty_weights: Union[str, Path, None] = None,
     ) -> None:
         super().__init__()
 
@@ -114,7 +116,18 @@ class UPIQAL(nn.Module):
             pretrained=pretrained_vgg,
             weights_path=vgg_weights_path,
         )
-        self.uncertainty = ProbabilisticUncertaintyMapper()
+        self.uncertainty = ProbabilisticUncertaintyMapper(
+            parameterization=uncertainty_parameterization,
+        )
+        if uncertainty_weights is not None:
+            state = torch.load(
+                str(uncertainty_weights), map_location="cpu", weights_only=True
+            )
+            # Allow loading either a bare state_dict or one wrapped under
+            # the "state_dict" key (which is what train_uncertainty.py saves).
+            if isinstance(state, dict) and "state_dict" in state:
+                state = state["state_dict"]
+            self.uncertainty.load_state_dict(state, strict=False)
         self.heuristics = SpatialHeuristicsEngine()
 
     # ------------------------------------------------------------------

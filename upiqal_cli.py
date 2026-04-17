@@ -736,7 +736,20 @@ def run_pipeline(args: argparse.Namespace) -> None:
         vgg_status = "random initialization (pretrained weights unavailable)"
     print(f"  VGG16 weights: {vgg_status}")
 
-    uncertainty = ProbabilisticUncertaintyMapper()
+    uncertainty_weights_path = getattr(args, "uncertainty_weights", None)
+    if uncertainty_weights_path:
+        uncertainty = ProbabilisticUncertaintyMapper(parameterization="blockdiag")
+        state = torch.load(
+            uncertainty_weights_path, map_location="cpu", weights_only=True
+        )
+        if isinstance(state, dict) and "state_dict" in state:
+            state = state["state_dict"]
+        uncertainty.load_state_dict(state, strict=False)
+        uncertainty.eval()
+        print(f"  Uncertainty weights: {uncertainty_weights_path} (blockdiag, loaded)")
+    else:
+        uncertainty = ProbabilisticUncertaintyMapper()
+        print("  Uncertainty weights: identity diagonal (untrained)")
     heuristics = SpatialHeuristicsEngine()
 
     # Aggregation weights (defaults from upiqal/model.py)
@@ -1017,6 +1030,18 @@ def parse_args() -> argparse.Namespace:
         default="png",
         choices=["png", "npy", "raw", "bin", "nv21"],
         help="Output format for diagnostic heatmaps (default: png).",
+    )
+
+    # --- Learned Cholesky factor (optional) ---
+    parser.add_argument(
+        "--uncertainty-weights",
+        dest="uncertainty_weights",
+        default=None,
+        help=(
+            "Path to a trained Cholesky checkpoint for Module 4 "
+            "(produced by train_uncertainty.py). If omitted, the "
+            "identity-diagonal baseline is used."
+        ),
     )
 
     return parser.parse_args()
