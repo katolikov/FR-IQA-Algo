@@ -5,8 +5,8 @@
   "cleanUrls": true,
   "trailingSlash": false,
   "rewrites": [
-    { "source": "/paper",       "destination": "/paper.html" },
-    { "source": "/api/(.*)",    "destination": "/api/proxy" }
+    { "source": "/paper",    "destination": "/paper.html" },
+    { "source": "/api/:path*", "destination": "https://katolikov-upiqal-eval.hf.space/api/:path*" }
   ],
   "headers": [
     {
@@ -21,11 +21,5 @@
         { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
       ]
     }
-  ],
-  "functions": {
-    "api/proxy.py": {
-      "runtime": "@vercel/python@4.1.0",
-      "maxDuration": 60
-    }
-  }
+  ]
 }
