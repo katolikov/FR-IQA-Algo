@@ -49,3 +49,14 @@ build/
 # whole api/ directory so Vercel's Python auto-detector doesn't try
 # to build a FastAPI app from it.
 api/
+
+# Ignore Python manifests ANYWHERE under web/ and the rest of the repo
+# so Vercel's framework auto-detector doesn't spin up a FastAPI build
+# pipeline.  Only web/public/ static assets are actually deployed.
+web/requirements.txt
+web/main.py
+web/mock_upiqal.py
+web/__init__.py
+requirements.txt
+setup.py
+setup.cfg
