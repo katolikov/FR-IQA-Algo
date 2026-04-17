@@ -7,7 +7,7 @@ sdk: docker
 app_port: 7860
 pinned: false
 license: mit
-short_description: "UPIQAL: Full-Reference Image Quality and Artifact Locator (FastAPI backend)."
+short_description: "FR-IQA Algorithm backend (FastAPI)"
 ---
 
 # UPIQAL — FastAPI inference backend (Hugging Face Space)

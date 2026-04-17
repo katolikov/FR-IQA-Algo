@@ -26,27 +26,31 @@ SPACE_ID="${1:-katolikov/upiqal-eval}"
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BUILD_DIR="$REPO_ROOT/build/hf_space"
 SPACE_URL="https://huggingface.co/spaces/$SPACE_ID"
+HF_USER="${HF_USER:-$(echo "$SPACE_ID" | cut -d/ -f1)}"
 
-# Use HF_TOKEN if set; otherwise rely on ~/.huggingface/token from `hf auth login`.
-if [[ -n "${HF_TOKEN:-}" ]]; then
-    HF_USER="${HF_USER:-$(echo "$SPACE_ID" | cut -d/ -f1)}"
-    PUSH_URL="https://${HF_USER}:${HF_TOKEN}@huggingface.co/spaces/$SPACE_ID"
-else
-    PUSH_URL="$SPACE_URL"
+# Read HF token (preferred order: explicit env var, then the file
+# `hf auth login` stores locally). The token is ONLY passed as a CLI
+# argument to `git push` below; it is never written to .git/config or
+# committed to any repo.
+if [[ -z "${HF_TOKEN:-}" ]] && [[ -f "$HOME/.cache/huggingface/token" ]]; then
+    HF_TOKEN="$(cat "$HOME/.cache/huggingface/token")"
 fi
 
 mkdir -p "$REPO_ROOT/build"
 
 # ---- 1. Clone or refresh the Space repo --------------------------------
+# Always use the plain (tokenless) Space URL as `origin` so the
+# credential never ends up persisted in .git/config. The actual push
+# uses an explicit token URL supplied via `git push <url>` below.
 if [[ -d "$BUILD_DIR/.git" ]]; then
     echo "[deploy] pulling existing clone of $SPACE_ID"
+    git -C "$BUILD_DIR" remote set-url origin "$SPACE_URL"
     git -C "$BUILD_DIR" fetch origin main
     git -C "$BUILD_DIR" reset --hard origin/main
 else
     echo "[deploy] cloning $SPACE_URL -> $BUILD_DIR"
     rm -rf "$BUILD_DIR"
     git clone "$SPACE_URL" "$BUILD_DIR"
-    git -C "$BUILD_DIR" remote set-url origin "$PUSH_URL" 2>/dev/null || true
 fi
 
 # ---- 2. Copy backend sources -------------------------------------------
@@ -121,7 +125,16 @@ PY
 
 # ---- 3. Commit + push ---------------------------------------------------
 cd "$BUILD_DIR"
+
+# HF Spaces' pre-receive hook rejects binary files (*.pth etc.) that
+# aren't tracked via LFS.  Track them explicitly before staging.
 git lfs install --local 2>/dev/null || true
+git lfs track "*.pth" > /dev/null 2>&1 || true
+# .gitattributes is where LFS filters live; make sure it's committed.
+[ -f .gitattributes ] || touch .gitattributes
+grep -q '\\*.pth filter=lfs' .gitattributes 2>/dev/null || \
+    echo '*.pth filter=lfs diff=lfs merge=lfs -text' >> .gitattributes
+
 git add -A
 if git diff --cached --quiet; then
     echo "[deploy] nothing to push (Space already up to date)"
@@ -129,7 +142,19 @@ else
     git -c user.name="UPIQAL Deploy Bot" \
         -c user.email="noreply@users.noreply.huggingface.co" \
         commit -m "deploy: sync FastAPI backend from GitHub main"
-    git push origin main
+
+    # If we have a token, inject it into the push URL so git auth
+    # doesn't hang on Device-not-configured. Otherwise rely on whatever
+    # credential.helper the user has configured (e.g. `hf auth login`'s
+    # git-credential-hf).
+    if [[ -n "${HF_TOKEN:-}" ]]; then
+        HF_USER="${HF_USER:-$(echo "$SPACE_ID" | cut -d/ -f1)}"
+        git -c http.postBuffer=524288000 push \
+            "https://${HF_USER}:${HF_TOKEN}@huggingface.co/spaces/$SPACE_ID" \
+            main
+    else
+        git -c http.postBuffer=524288000 push origin main
+    fi
     echo "[deploy] pushed to $SPACE_URL"
     echo "[deploy] build progress: $SPACE_URL/logs"
 fi
