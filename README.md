@@ -62,6 +62,26 @@ python -m uvicorn web.main:app --host 127.0.0.1 --port 8765
 # The new research paper is served at http://127.0.0.1:8765/paper
 ```
 
+## Reproducing the trained Module-4 checkpoint
+
+`weights/L_cholesky_blockdiag.pth` (≈1.2 MB, LFS-tracked) is the block-diagonal Cholesky factor L for the SUSS-style probabilistic uncertainty mapper, trained on KADID-10k. To reproduce it from scratch:
+
+```bash
+# 1. Fetch & unpack KADID-10k via Hugging Face mirror
+#    (~2.9 GB download, ~4 GB unpacked; ends up at /tmp/kadid/kadid10k/kadid10k/images)
+hf auth login            # optional; public dataset so unauth works too
+python3 scripts/download_kadid10k.py
+
+# 2. Train for ~4 hours on CPU (15 epochs × 500 steps = 7500 gradient steps)
+python3 train_uncertainty.py \
+    --data-dir /tmp/kadid/kadid10k/kadid10k/images \
+    --epochs 15 --steps-per-epoch 500 \
+    --lr 5e-4 --lr-schedule cosine --lr-min 1e-6 \
+    --out weights/L_cholesky_blockdiag.pth
+```
+
+Use `--extra-data-dir` to mix in a second image directory (e.g. BSDS500) during training. Without `--uncertainty-weights …` the CLI and web backend fall back to the identity-diagonal L (which is what the repo-bundled file provides when missing).
+
 ## Deploy · Split Architecture (Vercel + CPU host)
 
 PyTorch + VGG16 weights far exceed Vercel's serverless Python size limit, so inference runs on a separate CPU container host while Vercel serves the static frontend. The two halves are glued together by a 1-file proxy (`api/proxy.py`).
