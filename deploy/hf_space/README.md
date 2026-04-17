@@ -47,10 +47,9 @@ The interactive demo frontend is served at
 Source code, CLI, training pipeline, and algorithm write-up live on
 GitHub: **[katolikov/FR-IQA-Algo](https://github.com/katolikov/FR-IQA-Algo)**.
 
-* The static frontend lives on Vercel; it forwards every `/api/*`
-  request to this backend.
-* Point Vercel's `BACKEND_URL` environment variable at the public Space
-  URL (`https://katolikov-upiqal-eval.hf.space`) and redeploy.
+* The static frontend lives on Vercel; its `vercel.json` contains a
+  native rewrite that forwards every `/api/*` request straight to this
+  Space — no serverless proxy, no environment variables.
 * Endpoints: `POST /api/compare`, `GET /healthz`, `GET /api/download/{name}`.
 
 See the

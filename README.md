@@ -126,14 +126,25 @@ fly deploy
 
 **Step 2 — point Vercel at the backend**:
 
-```bash
-vercel env add BACKEND_URL production   # paste backend URL, e.g.
-                                        #   https://katolikov-upiqal-eval.hf.space
-                                        # or https://upiqal.fly.dev
-vercel --prod
+`vercel.json` routes every `/api/*` request straight to the HF Space via a native external rewrite — no Python proxy runs on Vercel, no environment variables to configure:
+
+```jsonc
+// vercel.json (excerpt)
+"rewrites": [
+  { "source": "/api/:path*",
+    "destination": "https://katolikov-upiqal-eval.hf.space/api/:path*" }
+]
 ```
 
-The same repo layout serves both: `vercel.json` publishes only `web/public/` + `api/proxy.py`; the Dockerfile builds the full FastAPI stack. `EXPOSE 7860` and `PORT=7860` match the Hugging Face Spaces convention; other hosts that inject their own `$PORT` (Fly / Render / Cloud Run) are picked up automatically.
+To deploy a frontend update:
+
+```bash
+vercel --prod        # uploads web/public/ only; /api/* rewrite goes to the HF Space
+```
+
+If you deployed the backend on **Fly.io / Render** instead of HF, edit the `destination` URL in `vercel.json` to match and push. The legacy `api/proxy.py` serverless function is kept in the repo but is no longer referenced by `vercel.json`; you can still use it on hosts that don't support external rewrites by restoring the old `functions` block.
+
+`EXPOSE 7860` and `PORT=7860` in the Dockerfile match the Hugging Face Spaces convention; other hosts that inject their own `$PORT` (Fly / Render / Cloud Run) are picked up automatically.
 
 Representative scores for the three shipped sanity tests (default config: `--score-mode sigmoid`, multi-scale pyramid on, identity-diagonal `L`):
 

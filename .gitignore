@@ -60,3 +60,5 @@ weights/vgg16-*.pth
 
 # HF Space deploy workspace (clone of the target Space repo).
 build/
+.vercel
+.env*.local
