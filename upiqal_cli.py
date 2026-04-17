@@ -866,9 +866,13 @@ def run_pipeline(args: argparse.Namespace) -> None:
     final_score_tensor = torch.sigmoid(final_score_tensor).squeeze(1)  # (B,)
     final_score = round(float(final_score_tensor[0].item()), 4)
 
-    # ── Build diagnostic tensor (B, 5, H, W) ───────────────────────
+    # ── Build diagnostic tensor (B, 7, H, W) ───────────────────────
     diagnostic = torch.cat(
-        [anomaly_norm, color_norm, deep_sim, blocking_mask, ringing_mask],
+        [
+            anomaly_norm, color_norm, deep_sim,
+            blocking_mask, ringing_mask,
+            noise_mask, blur_mask,
+        ],
         dim=1,
     )
 
@@ -898,6 +902,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
         (2, "structural_similarity_map",  True),
         (3, "jpeg_blocking_mask",         False),
         (4, "gibbs_ringing_mask",         False),
+        (5, "gaussian_noise_mask",        True),
+        (6, "blur_mask",                  True),
     ]
     for ch_idx, name, use_cmap in channel_info:
         save_channel(

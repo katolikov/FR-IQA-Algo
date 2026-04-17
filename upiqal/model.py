@@ -248,6 +248,8 @@ class UPIQAL(nn.Module):
         heur = self.heuristics(ref_raw, tgt_raw)
         blocking_mask = heur["blocking_mask"]  # (B,1,H,W)
         ringing_mask = heur["ringing_mask"]  # (B,1,H,W)
+        noise_mask = heur["noise_mask"]  # (B,1,H,W)
+        blur_mask = heur["blur_mask"]  # (B,1,H,W)
 
         # ---- Aggregation ----
         # Deep similarity map (higher = more similar).  Clamp to [0, 1] so
@@ -288,11 +290,18 @@ class UPIQAL(nn.Module):
         # Clamp and shift to [0,1]
         score = torch.sigmoid(score).squeeze(1)  # (B,)
 
-        # Diagnostic tensor: 5 channels
+        # Diagnostic tensor: 7 channels.
+        # Channel layout (indexed downstream by the CLI and web frontend):
+        #   0 anomaly, 1 color, 2 structure, 3 blocking, 4 ringing,
+        #   5 noise (wavelet-MAD),  6 blur (HF-attenuation).
         diagnostic = torch.cat(
-            [anomaly_norm, color_norm, deep_sim, blocking_mask, ringing_mask],
+            [
+                anomaly_norm, color_norm, deep_sim,
+                blocking_mask, ringing_mask,
+                noise_mask, blur_mask,
+            ],
             dim=1,
-        )  # (B, 5, H, W)
+        )  # (B, 7, H, W)
 
         return {
             "score": score,

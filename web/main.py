@@ -96,7 +96,19 @@ def get_model() -> UPIQAL:
     """
     global _model
     if _model is None:
-        uncertainty_weights = os.environ.get("UPIQAL_UNCERTAINTY_WEIGHTS") or None
+        # Resolve trained Cholesky factor. Priority:
+        #   1. UPIQAL_UNCERTAINTY_WEIGHTS env var
+        #   2. Default bundled ckpt at weights/L_cholesky_blockdiag.pth
+        #   3. No trained factor (identity-diagonal fallback)
+        env_weights = os.environ.get("UPIQAL_UNCERTAINTY_WEIGHTS") or None
+        default_weights = _REPO_ROOT / "weights" / "L_cholesky_blockdiag.pth"
+        if env_weights:
+            uncertainty_weights: Optional[str] = env_weights
+        elif default_weights.is_file():
+            uncertainty_weights = str(default_weights)
+        else:
+            uncertainty_weights = None
+
         if uncertainty_weights:
             _model = UPIQAL(
                 pretrained_vgg=True,
@@ -110,6 +122,8 @@ def get_model() -> UPIQAL:
         msg = f"UPIQAL model loaded on {_device}"
         if uncertainty_weights:
             msg += f" (uncertainty weights: {uncertainty_weights})"
+        else:
+            msg += " (uncertainty: identity-diagonal fallback)"
         print(msg)
     return _model
 
@@ -459,8 +473,10 @@ def compute_diagnostics(
     Parameters
     ----------
     diag : torch.Tensor
-        The 5-channel diagnostic tensor ``(1, 5, H, W)``. Channels:
+        The diagnostic tensor ``(1, C, H, W)``. Channels:
         0 = anomaly, 1 = color, 2 = structure, 3 = blocking, 4 = ringing.
+        Optional (present in C=7 tensors from the current model):
+        5 = noise (wavelet-MAD), 6 = blur (HF attenuation).
     ref_raw, tgt_raw : torch.Tensor, optional
         Images in ``[0, 1]`` used by the HF-energy discriminator. When
         omitted, the discriminator is skipped.
@@ -475,12 +491,22 @@ def compute_diagnostics(
     structure = diag[0, 2]
     blocking = diag[0, 3]
     ringing = diag[0, 4]
+    # Dedicated detectors (optional; fall back to the anomaly/structure
+    # proxies for backward compatibility with older 5-channel tensors).
+    has_noise_ch = diag.shape[1] >= 6
+    has_blur_ch = diag.shape[1] >= 7
 
     blocking_sev = float(blocking.mean().item()) * 100
     ringing_sev = float(ringing.mean().item()) * 100
-    noise_sev = float(anomaly.mean().item()) * 100
     color_sev = float(color_map.mean().item()) * 100
-    blur_sev = float((1.0 - structure).mean().item()) * 100
+    if has_noise_ch:
+        noise_sev = float(diag[0, 5].mean().item()) * 100
+    else:
+        noise_sev = float(anomaly.mean().item()) * 100
+    if has_blur_ch:
+        blur_sev = float(diag[0, 6].mean().item()) * 100
+    else:
+        blur_sev = float((1.0 - structure).mean().item()) * 100
 
     severity_scores = {
         "blocking":    round(min(blocking_sev * _SEVERITY_MULTIPLIERS["blocking"], 100.0), 1),
@@ -644,8 +670,11 @@ async def compare(
         diag, ref_raw=ref_on_device, tgt_raw=tgt_on_device,
     )
 
-    # Encode heatmap channels as Base64 PNGs
-    channel_names = ["anomaly", "color", "structure", "blocking", "ringing"]
+    # Encode heatmap channels as Base64 PNGs.
+    # Channels 5/6 (noise/blur) are only present when the current model
+    # emits a 7-channel diagnostic tensor; older 5-channel tensors
+    # simply skip them for backwards compatibility.
+    channel_names = _CHANNEL_NAMES[: diag.shape[1]]
     heatmaps = {}
     for i, name in enumerate(channel_names):
         use_colormap = name not in ("blocking", "ringing")
@@ -696,7 +725,9 @@ def _store_last_diagnostic(diag: torch.Tensor) -> None:
     _last_diagnostic = diag.cpu()
 
 
-_CHANNEL_NAMES = ["anomaly", "color", "structure", "blocking", "ringing"]
+_CHANNEL_NAMES = [
+    "anomaly", "color", "structure", "blocking", "ringing", "noise", "blur",
+]
 
 
 @app.get("/api/download/{mask_name}")

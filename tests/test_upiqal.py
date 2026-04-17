@@ -287,46 +287,55 @@ class TestProbabilisticUncertaintyMapper:
 # ---------------------------------------------------------------------------
 
 class TestSpatialHeuristicsEngine:
-    def test_blocking_mask_shape(self, tgt_img):
+    # NOTE: all heuristic detectors are DIFFERENTIAL — they return
+    # artifacts present in ``tgt`` that are NOT already in ``ref``.
+    # Tests therefore pass both arguments; passing ``tgt == ref`` is the
+    # canonical "no artifacts" case.
+
+    def test_blocking_mask_shape(self, ref_img, tgt_img):
         from upiqal.heuristics import JPEGBlockingDetector
         det = JPEGBlockingDetector()
-        mask = det(tgt_img)
+        mask = det(ref_img, tgt_img)
         assert mask.shape == (B, 1, H, W)
 
-    def test_blocking_mask_binary(self, tgt_img):
+    def test_blocking_mask_binary(self, ref_img, tgt_img):
         from upiqal.heuristics import JPEGBlockingDetector
         det = JPEGBlockingDetector()
-        mask = det(tgt_img)
+        mask = det(ref_img, tgt_img)
         unique_vals = mask.unique()
         for v in unique_vals:
             assert v.item() in (0.0, 1.0), f"Blocking mask should be binary, got {v}"
 
-    def test_ringing_mask_shape(self, tgt_img):
+    def test_ringing_mask_shape(self, ref_img, tgt_img):
         from upiqal.heuristics import GibbsRingingDetector
         det = GibbsRingingDetector()
-        mask = det(tgt_img)
+        mask = det(ref_img, tgt_img)
         assert mask.shape == (B, 1, H, W)
 
-    def test_ringing_mask_range(self, tgt_img):
+    def test_ringing_mask_range(self, ref_img, tgt_img):
         from upiqal.heuristics import GibbsRingingDetector
         det = GibbsRingingDetector()
-        mask = det(tgt_img)
+        mask = det(ref_img, tgt_img)
         assert mask.min() >= 0.0
         assert mask.max() <= 1.0
 
-    def test_combined_engine_keys(self, tgt_img):
+    def test_combined_engine_keys(self, ref_img, tgt_img):
         from upiqal.heuristics import SpatialHeuristicsEngine
         engine = SpatialHeuristicsEngine()
-        out = engine(tgt_img)
+        out = engine(ref_img, tgt_img)
+        # Engine now returns four detector masks (added noise/blur
+        # alongside blocking/ringing).
         assert "blocking_mask" in out
         assert "ringing_mask" in out
+        assert "noise_mask" in out
+        assert "blur_mask" in out
 
     def test_uniform_image_no_blocking(self):
         """A perfectly uniform image should have no blocking artifacts."""
         from upiqal.heuristics import JPEGBlockingDetector
         det = JPEGBlockingDetector()
         uniform = torch.full((1, 3, 64, 64), 0.5)
-        mask = det(uniform)
+        mask = det(uniform, uniform)
         assert mask.sum().item() == 0.0
 
     def test_sobel_flat_image_no_edges(self):
@@ -334,7 +343,7 @@ class TestSpatialHeuristicsEngine:
         from upiqal.heuristics import GibbsRingingDetector
         det = GibbsRingingDetector()
         flat = torch.full((1, 3, 64, 64), 0.5)
-        mask = det(flat)
+        mask = det(flat, flat)
         assert mask.sum().item() == 0.0
 
 
@@ -352,7 +361,9 @@ class TestUPIQALIntegration:
         assert "score" in out
         assert "diagnostic_tensor" in out
         assert out["score"].shape == (B,)
-        assert out["diagnostic_tensor"].shape == (B, 5, H, W)
+        # Diagnostic tensor grew from 5 -> 7 channels (added noise + blur
+        # masks from the wavelet MAD / HF-attenuation detectors).
+        assert out["diagnostic_tensor"].shape == (B, 7, H, W)
 
     @patch("upiqal.features.models.vgg16", side_effect=_mock_vgg16)
     def test_score_in_01(self, mock_vgg, ref_img, tgt_img):
