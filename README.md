@@ -60,7 +60,15 @@ Vercel (static)                              CPU Host (FastAPI + torch)
 **Step 1 — deploy the backend** (choose one):
 
 ```bash
-# Fly.io
+# Option A — Hugging Face Spaces (free CPU tier, Docker SDK).
+# The helper script clones https://huggingface.co/spaces/katolikov/upiqal-eval,
+# syncs the backend sources, patches the Dockerfile to prefetch VGG16 weights,
+# and pushes. Requires `hf auth login` once, or `HF_TOKEN=hf_xxx`.
+./deploy/hf_space/deploy.sh             # defaults to katolikov/upiqal-eval
+./deploy/hf_space/deploy.sh user/space  # push to a different Space
+# → https://katolikov-upiqal-eval.hf.space
+
+# Option B — Fly.io
 fly launch --copy-config --name upiqal --no-deploy
 fly deploy
 # → https://upiqal.fly.dev
@@ -71,11 +79,13 @@ fly deploy
 **Step 2 — point Vercel at the backend**:
 
 ```bash
-vercel env add BACKEND_URL production   # paste https://upiqal.fly.dev
+vercel env add BACKEND_URL production   # paste backend URL, e.g.
+                                        #   https://katolikov-upiqal-eval.hf.space
+                                        # or https://upiqal.fly.dev
 vercel --prod
 ```
 
-The same repo layout serves both: `vercel.json` publishes only `web/public/` + `api/proxy.py`; the Dockerfile builds the full FastAPI stack.
+The same repo layout serves both: `vercel.json` publishes only `web/public/` + `api/proxy.py`; the Dockerfile builds the full FastAPI stack. `EXPOSE 7860` and `PORT=7860` match the Hugging Face Spaces convention; other hosts that inject their own `$PORT` (Fly / Render / Cloud Run) are picked up automatically.
 
 Representative scores for the three shipped sanity tests (default config: `--score-mode sigmoid`, multi-scale pyramid on, identity-diagonal `L`):
 

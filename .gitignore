@@ -57,3 +57,6 @@ upiqal_web_*.png
 # Ignore only the 528 MB ImageNet VGG16 checkpoint. Small trained
 # factors like weights/L_cholesky_blockdiag.pth (~1.2 MB) ARE tracked.
 weights/vgg16-*.pth
+
+# HF Space deploy workspace (clone of the target Space repo).
+build/

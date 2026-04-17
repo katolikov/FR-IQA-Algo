@@ -1,6 +1,11 @@
 # Dockerfile for the UPIQAL FastAPI inference backend.
-# Use this on a CPU-capable container host (Fly.io / Render / Railway).
-# Vercel handles the static frontend separately; see vercel.json.
+# Use this on a CPU-capable container host (Fly.io / Render / Railway /
+# Hugging Face Spaces).  Vercel handles the static frontend separately;
+# see vercel.json.
+#
+# The server listens on ${PORT:-7860} so it works out of the box on
+# Hugging Face Spaces (which injects PORT=7860).  Override with `-e PORT=8000`
+# for local runs or other hosts.
 
 FROM python:3.11-slim
 
@@ -8,7 +13,9 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PORT=8000
+    PORT=7860 \
+    HF_HOME=/tmp/huggingface \
+    TORCH_HOME=/tmp/torch
 
 WORKDIR /app
 
@@ -34,10 +41,10 @@ COPY weights/ /app/weights/
 COPY upiqal_cli.py /app/upiqal_cli.py
 COPY pyproject.toml /app/pyproject.toml
 
-EXPOSE 8000
+EXPOSE 7860
 
 # Healthcheck — the server exposes /healthz once FastAPI is ready.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
     CMD curl -f http://127.0.0.1:${PORT}/healthz || exit 1
 
-CMD ["sh", "-c", "uvicorn web.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1"]
+CMD ["sh", "-c", "uvicorn web.main:app --host 0.0.0.0 --port ${PORT:-7860} --workers 1"]
