@@ -22,8 +22,8 @@
 
 UPIQAL takes a **reference** and a **target** image and returns:
 
-1. A single FR-IQA scalar score in `[0, 1]` (higher = better).
-2. Five diagnostic heatmaps — `anomaly`, `color`, `structure`, `blocking`, `ringing`.
+1. A single FR-IQA scalar score in `[0, 1]` (higher = better). Two modes: the legacy calibrated sigmoid (default, `--score-mode sigmoid`) and the paper-prescribed negative-log-likelihood mapping (`--score-mode nll`).
+2. Seven diagnostic heatmaps — `anomaly`, `color`, `structure`, `blocking`, `ringing`, `noise` (wavelet-MAD, Donoho), `blur` (HF-attenuation).
 3. A labelled dominant artifact (`Severe JPEG Blocking`, `Gibbs Ringing`, `Noise / Granularity`, `Color Shift`, `Blur / Loss of Detail`, or `None`).
 4. Percentage of pixels flagged as "affected".
 
@@ -77,15 +77,15 @@ vercel --prod
 
 The same repo layout serves both: `vercel.json` publishes only `web/public/` + `api/proxy.py`; the Dockerfile builds the full FastAPI stack.
 
-Representative scores for the three shipped sanity tests:
+Representative scores for the three shipped sanity tests (default config: `--score-mode sigmoid`, multi-scale pyramid on, identity-diagonal `L`):
 
 | Pair | Score | Dominant | Affected |
 |---|---:|---|---:|
-| `image (2).png` vs itself                        | **0.9526** | None           | 0.0 % |
-| `image (2).png` vs `image (3).png`               | **0.8779** | Gibbs Ringing  | 6.4 % |
-| `left.png` vs `right.png` (cartoon worm L vs R)  | **0.7181** | Blur / Loss    | 11.4 % |
+| `image (2).png` vs itself                        | **0.9526** | None                   | 0.0 % |
+| `image (2).png` vs `image (3).png`               | **0.9115** | Gibbs Ringing          | 9.9 % |
+| `left.png` vs `right.png` (cartoon worm L vs R)  | **0.7613** | Severe JPEG Blocking   | 5.9 % |
 
-The CLI and web backend are numerically identical (both run on CPU; MPS is disabled because its asynchronous OOMs silently nuke the anomaly channel).
+Adding `--uncertainty-weights weights/L_cholesky_blockdiag.pth` loads the BSDS500-trained block-diagonal Cholesky factor for Module 4 (slightly wider score stratification on different-image pairs). The CLI and web backend are numerically identical (both run on CPU; MPS is disabled because its asynchronous OOMs silently nuke the anomaly channel).
 
 ## Worked Example · Spot-the-Differences
 
@@ -106,14 +106,16 @@ A classic "spot the differences" cartoon (A vs B). UPIQAL's Global Anomaly Map a
 
 ### UPIQAL output
 
-Running the CLI on this pair (`--max-side 768`):
+Running the CLI on this pair (`--max-side 768`, default config):
 
 ```
-FR-IQA Score        0.7342  (Good quality)
-Dominant Artifact   Blur / Loss of Detail
-Affected Area       2.9 %
-Severities          blocking=0.0  ringing=62.9  noise=15.7  color=17.6  blur=70.2
+FR-IQA Score        0.8074  (Good quality)
+Dominant Artifact   Severe JPEG Blocking
+Affected Area       6.2 %
+Severities          blocking=62.5  ringing=63.4  noise=100.0  color=59.5  blur=38.7
 ```
+
+The new NFA a-contrario blocking test (Module 5, item 1 of the paper-spec pass) fires on the 8-pixel grid transitions inherent to raster cartoons; the multi-level wavelet MAD (item 3) picks up the per-pane JPEG noise floor introduced by scanning.
 
 <table>
 <tr>
