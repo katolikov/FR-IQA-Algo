@@ -54,13 +54,28 @@ echo "[deploy] syncing backend sources"
 # Remove stale inference code but keep .git history.
 find "$BUILD_DIR" -mindepth 1 -maxdepth 1 -not -name '.git' -exec rm -rf {} +
 
-cp -R "$REPO_ROOT/upiqal"          "$BUILD_DIR/upiqal"
-cp -R "$REPO_ROOT/web"             "$BUILD_DIR/web"
-cp -R "$REPO_ROOT/weights"         "$BUILD_DIR/weights"
-cp    "$REPO_ROOT/Dockerfile"      "$BUILD_DIR/Dockerfile"
-cp    "$REPO_ROOT/pyproject.toml"  "$BUILD_DIR/pyproject.toml"
-cp    "$REPO_ROOT/upiqal_cli.py"   "$BUILD_DIR/upiqal_cli.py"
+copy_clean() {
+    # Copy a directory excluding junk Python caches and editor cruft.
+    local src="$1" dst="$2"
+    rsync -a \
+        --exclude '__pycache__/' \
+        --exclude '*.pyc' \
+        --exclude '*.pyo' \
+        --exclude '.DS_Store' \
+        --exclude '.pytest_cache/' \
+        "$src/" "$dst/"
+}
+
+copy_clean "$REPO_ROOT/upiqal"       "$BUILD_DIR/upiqal"
+copy_clean "$REPO_ROOT/web"          "$BUILD_DIR/web"
+copy_clean "$REPO_ROOT/weights"      "$BUILD_DIR/weights"
+cp    "$REPO_ROOT/Dockerfile"        "$BUILD_DIR/Dockerfile"
+cp    "$REPO_ROOT/pyproject.toml"    "$BUILD_DIR/pyproject.toml"
+cp    "$REPO_ROOT/upiqal_cli.py"     "$BUILD_DIR/upiqal_cli.py"
 cp    "$REPO_ROOT/api/requirements.txt" "$BUILD_DIR/requirements.txt"
+
+# Drop legacy duplicate directories that the active code no longer reads.
+rm -rf "$BUILD_DIR/web/templates" "$BUILD_DIR/web/static"
 
 # Space README with the HF YAML frontmatter.
 cp    "$REPO_ROOT/deploy/hf_space/README.md" "$BUILD_DIR/README.md"
