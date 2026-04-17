@@ -179,15 +179,16 @@
   border: 1px solid var(--hairline);
 }
 .cmp-table thead {
-  position: sticky; top: var(--nav-h);
+  /* NOTE: previously position:sticky + backdrop-filter:blur left the
+     first data row (SSIM / MS-SSIM) visually chopped — a translucent
+     thead bled the row below it through itself. A solid-background,
+     non-sticky header renders correctly on every row. */
   background: var(--surface-2);
-  backdrop-filter: blur(10px);
 }
 .cmp-table th {
   text-align: left;
   padding: 14px 16px;
   font-weight: 600;
-  letter-spacing: 0.02em;
   color: var(--text-0);
   border-bottom: 1px solid var(--hairline);
   font-size: var(--text-xs);
