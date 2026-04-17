@@ -10,10 +10,27 @@
 </p>
 
 <p align="center">
+  <a href="https://huggingface.co/spaces/katolikov/upiqal-eval">
+    <img
+      alt="Open in Hugging Face Spaces"
+      src="https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Space-FF9D00?style=for-the-badge"
+    />
+  </a>
+  &nbsp;
+  <a href="https://katolikov-upiqal-eval.hf.space/healthz">
+    <img
+      alt="Backend status"
+      src="https://img.shields.io/website?style=for-the-badge&label=Backend&url=https%3A%2F%2Fkatolikov-upiqal-eval.hf.space%2Fhealthz"
+    />
+  </a>
+</p>
+
+<p align="center">
   <a href="#quick-start">Quick Start</a> ·
   <a href="#web-ui">Web UI</a> ·
   <a href="#algorithm-formulation-upiqal">Algorithm</a> ·
-  <a href="#ui-design--samsung-monochrome-palette">Palette</a>
+  <a href="#ui-design--samsung-monochrome-palette">Palette</a> ·
+  <a href="https://huggingface.co/spaces/katolikov/upiqal-eval">HF Space</a>
 </p>
 
 ---

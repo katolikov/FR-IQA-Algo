@@ -14,6 +14,23 @@ thumbnail: "https://raw.githubusercontent.com/katolikov/FR-IQA-Algo/main/docs/ex
 # UPIQAL — FastAPI inference backend
 
 <p align="center">
+  <a href="https://github.com/katolikov/FR-IQA-Algo">
+    <img alt="Source on GitHub"
+         src="https://img.shields.io/badge/GitHub-katolikov%2FFR--IQA--Algo-181717?logo=github&style=for-the-badge" />
+  </a>
+  &nbsp;
+  <a href="https://github.com/katolikov/FR-IQA-Algo/blob/main/README.md">
+    <img alt="Project README"
+         src="https://img.shields.io/badge/docs-README-blue?style=for-the-badge" />
+  </a>
+  &nbsp;
+  <a href="https://github.com/katolikov/FR-IQA-Algo/blob/main/LICENSE">
+    <img alt="License MIT"
+         src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge" />
+  </a>
+</p>
+
+<p align="center">
   <img
     src="https://raw.githubusercontent.com/katolikov/FR-IQA-Algo/main/docs/examples/upiqal_output/anomaly_overlay.png"
     alt="UPIQAL anomaly overlay on the worked-example cartoon pair"
@@ -25,8 +42,8 @@ thumbnail: "https://raw.githubusercontent.com/katolikov/FR-IQA-Algo/main/docs/ex
 Image Quality Assessment with spatially precise diagnostics for JPEG
 blocking, Gibbs ringing, Gaussian noise, blur, and chromatic transport.
 
-This Space serves the backend API for
-[katolikov/FR-IQA-Algo](https://github.com/katolikov/FR-IQA-Algo).
+Source code, CLI, training pipeline, and algorithm write-up live on
+GitHub: **[katolikov/FR-IQA-Algo](https://github.com/katolikov/FR-IQA-Algo)**.
 
 * The static frontend lives on Vercel; it forwards every `/api/*`
   request to this backend.
