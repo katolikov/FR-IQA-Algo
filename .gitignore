@@ -48,6 +48,9 @@ __pycache__/
 analysis/
 upiqal_*/
 upiqal_web_*.png
+# Re-include the README's worked-example output snapshot (bundled with docs).
+!docs/examples/upiqal_output/
+!docs/examples/upiqal_output/**
 
 # Local-only artifacts (large or machine-specific)
 .DS_Store

@@ -1,23 +1,23 @@
 {
   "tool": "UPIQAL FR-IQA v0.1.0",
-  "timestamp": "2026-04-17T03:05:04.876101",
+  "timestamp": "2026-04-17T18:43:06.282968",
   "reference_image": "/Users/artemkatolikov/DEV/FR-IQA-Algo/docs/examples/cartoon_A_reference.png",
   "target_image": "/Users/artemkatolikov/DEV/FR-IQA-Algo/docs/examples/cartoon_B_target.png",
-  "output_directory": "docs/examples/upiqal_output",
+  "output_directory": "/tmp/readme_worked",
   "image_resolution": {
-    "height": 482,
-    "width": 768
+    "height": 161,
+    "width": 256
   },
-  "score": 0.7342,
+  "score": 0.8074,
   "diagnostics": {
-    "dominant_artifact": "Blur / Loss of Detail",
+    "dominant_artifact": "Severe JPEG Blocking",
     "severity_scores": {
-      "blocking": 0.0,
-      "ringing": 62.9,
-      "noise": 15.7,
-      "color_shift": 17.6,
-      "blur": 70.2
+      "blocking": 62.5,
+      "ringing": 63.4,
+      "noise": 100.0,
+      "color_shift": 59.5,
+      "blur": 38.7
     },
-    "affected_area": 2.9
+    "affected_area": 6.2
   }
 }

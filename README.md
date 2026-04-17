@@ -128,6 +128,16 @@ The new NFA a-contrario blocking test (Module 5, item 1 of the paper-spec pass) 
   <td><img src="docs/examples/upiqal_output/color_degradation_map.png" alt="Color degradation map" /></td>
   <td><img src="docs/examples/upiqal_output/anomaly_overlay.png"       alt="Anomaly overlay" /></td>
 </tr>
+<tr>
+  <th align="center">Gaussian Noise Mask</th>
+  <th align="center">Blur Mask</th>
+  <th align="center">Structural Similarity Map</th>
+</tr>
+<tr>
+  <td><img src="docs/examples/upiqal_output/gaussian_noise_mask.png"         alt="Gaussian noise mask (Donoho MAD across 3 wavelet levels)" /></td>
+  <td><img src="docs/examples/upiqal_output/blur_mask.png"                   alt="Blur mask (HF-attenuation ratio target vs reference)" /></td>
+  <td><img src="docs/examples/upiqal_output/structural_similarity_map.png"   alt="Structural similarity map (A-DISTS aggregate)" /></td>
+</tr>
 </table>
 
 ### Golden reference
