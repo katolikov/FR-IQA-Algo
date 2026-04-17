@@ -76,7 +76,7 @@ copy_clean "$REPO_ROOT/weights"      "$BUILD_DIR/weights"
 cp    "$REPO_ROOT/Dockerfile"        "$BUILD_DIR/Dockerfile"
 cp    "$REPO_ROOT/pyproject.toml"    "$BUILD_DIR/pyproject.toml"
 cp    "$REPO_ROOT/upiqal_cli.py"     "$BUILD_DIR/upiqal_cli.py"
-cp    "$REPO_ROOT/api/requirements.txt" "$BUILD_DIR/requirements.txt"
+cp    "$REPO_ROOT/web/requirements.txt" "$BUILD_DIR/requirements.txt"
 
 # Drop legacy duplicate directories that the active code no longer reads.
 rm -rf "$BUILD_DIR/web/templates" "$BUILD_DIR/web/static"
