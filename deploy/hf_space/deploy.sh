@@ -160,7 +160,9 @@ else
 fi
 
 echo ""
-echo "=== Next step: point Vercel at the HF Space ==="
-echo "  vercel env add BACKEND_URL production"
-echo "  # paste: https://${SPACE_ID/\//-}.hf.space"
+echo "=== Vercel frontend ==="
+echo "  vercel.json already routes /api/* directly to https://${SPACE_ID/\//-}.hf.space"
+echo "  via a native rewrite, so no env var is needed.  Run 'vercel --prod' in the"
+echo "  repo root to publish a frontend update; /api/* calls automatically reach"
+echo "  this Space."
 echo "  vercel --prod"
