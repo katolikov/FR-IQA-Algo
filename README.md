@@ -29,7 +29,6 @@
   <a href="#quick-start">Quick Start</a> ·
   <a href="#web-ui">Web UI</a> ·
   <a href="#algorithm-formulation-upiqal">Algorithm</a> ·
-  <a href="#ui-design--samsung-monochrome-palette">Palette</a> ·
   <a href="https://huggingface.co/spaces/katolikov/upiqal-eval">HF Space</a>
 </p>
 
