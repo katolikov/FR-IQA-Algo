@@ -34,9 +34,14 @@ import torch.nn.functional as F
 _PARAMETERIZATIONS = ("diagonal", "blockdiag")
 
 # Clamp range for log-diagonal entries to keep exp(log_diag) numerically sane
-# during training.  exp(-5) ~ 6.7e-3, exp(5) ~ 148.
-_LOG_DIAG_MIN = -5.0
-_LOG_DIAG_MAX = 5.0
+# during training.  exp(-8) ~ 3.4e-4, exp(8) ~ 2981.  The previous [-5, +5]
+# window capped each diagonal at ~148, which in longer runs the optimiser
+# would saturate after a few epochs — further gradient steps had nowhere
+# to grow log|det L|.  The wider [-8, +8] window leaves headroom for O(10k)
+# step runs on bigger datasets without losing numerical stability
+# (exp(8) is still << float32 max).
+_LOG_DIAG_MIN = -8.0
+_LOG_DIAG_MAX = 8.0
 
 
 class ProbabilisticUncertaintyMapper(nn.Module):

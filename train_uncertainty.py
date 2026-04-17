@@ -126,6 +126,26 @@ def main() -> int:
         help="torch device (default: cpu).  CUDA is supported if available.",
     )
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--lr-schedule", choices=["constant", "cosine"], default="cosine",
+        help=(
+            "Learning-rate schedule.  'cosine' decays lr from --lr down to "
+            "--lr-min over the full training horizon, which lets L converge "
+            "without the last few epochs undoing early progress. "
+            "'constant' keeps lr fixed (legacy)."
+        ),
+    )
+    parser.add_argument(
+        "--lr-min", type=float, default=1e-6,
+        help="Minimum lr for the cosine schedule (default 1e-6).",
+    )
+    parser.add_argument(
+        "--extra-data-dir", type=Path, default=None,
+        help=(
+            "Optional second image directory whose contents are concatenated "
+            "with --data-dir.  Useful for mixing BSDS500 + COCO etc."
+        ),
+    )
     args = parser.parse_args()
 
     random.seed(args.seed)
@@ -133,7 +153,16 @@ def main() -> int:
 
     device = torch.device(args.device)
     paths = _collect_image_paths(args.data_dir)
-    print(f"[train] found {len(paths)} image(s) under {args.data_dir}")
+    if args.extra_data_dir is not None and args.extra_data_dir.exists():
+        extra = _collect_image_paths(args.extra_data_dir)
+        paths = paths + extra
+        print(
+            f"[train] found {len(paths)} image(s) "
+            f"(main={len(paths) - len(extra)} under {args.data_dir}, "
+            f"extra={len(extra)} under {args.extra_data_dir})"
+        )
+    else:
+        print(f"[train] found {len(paths)} image(s) under {args.data_dir}")
 
     normalizer = Normalizer(mode="imagenet").to(device).eval()
     deep_stats = DeepStatisticalExtractor(pretrained=True).to(device).eval()
@@ -147,6 +176,16 @@ def main() -> int:
 
     optim = torch.optim.Adam(uncertainty.parameters(), lr=args.lr)
     augment = ImperceptibleAugment(AugmentConfig())
+
+    # Cosine schedule: smoothly anneal from args.lr down to args.lr_min across
+    # the full (epochs * steps_per_epoch) horizon.  One schedule step per
+    # epoch is enough since our epochs are short (~200 steps).
+    if args.lr_schedule == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optim, T_max=args.epochs, eta_min=args.lr_min,
+        )
+    else:
+        scheduler = None
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -170,11 +209,15 @@ def main() -> int:
         )
         history.extend(losses)
         mean_loss = sum(losses) / max(1, len(losses))
+        current_lr = optim.param_groups[0]["lr"]
         print(
             f"[train] epoch {epoch + 1}/{args.epochs} "
             f"mean_loss={mean_loss:.4f} "
+            f"lr={current_lr:.2e} "
             f"(first={losses[0]:.4f} last={losses[-1]:.4f})"
         )
+        if scheduler is not None:
+            scheduler.step()
 
     ckpt = {
         "state_dict": uncertainty.state_dict(),
