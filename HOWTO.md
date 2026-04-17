@@ -117,3 +117,62 @@ Make sure the virtual environment is active (`source venv/bin/activate`) before 
 
 **`colour` package not found**
 Install it explicitly: `pip install colour-science`.
+
+---
+
+## 8. Deploy — Vercel + CPU host split
+
+The inference stack (PyTorch + 528 MB VGG16 weights) is too large for Vercel's serverless Python runtime. The recommended topology:
+
+- **Vercel** — serves the static frontend from `web/public/` and a one-file proxy `api/proxy.py` that forwards `/api/*` requests upstream.
+- **CPU host (Fly.io / Render / Railway)** — runs the full FastAPI app from the top-level `Dockerfile`.
+
+### 8.1 · Deploy the backend to Fly.io
+
+```bash
+brew install flyctl        # or curl -L https://fly.io/install.sh | sh
+fly auth login
+fly launch --copy-config --name upiqal --no-deploy
+fly deploy
+# note the resulting URL, e.g. https://upiqal.fly.dev
+curl https://upiqal.fly.dev/healthz     # should return {"ok":true,"device":"cpu"}
+```
+
+Adjust memory in `fly.toml` (default `2048 MB`) if you see OOMs on large uploads.
+
+### 8.2 · Deploy the backend to Render (alternative)
+
+Push to GitHub; create a new **Web Service** pointed at this repo. Render discovers `render.yaml` automatically. Keep the plan at **Standard** or higher (2 GB+) — Starter will OOM.
+
+### 8.3 · Wire Vercel to the backend
+
+```bash
+vercel login
+vercel link
+vercel env add BACKEND_URL production    # paste https://upiqal.fly.dev
+vercel --prod
+```
+
+Open the deployed URL. The analyzer calls `/api/compare`, which Vercel rewrites to `/api/proxy`, which forwards to `${BACKEND_URL}/api/compare`.
+
+### 8.4 · Lock CORS in production
+
+On the backend host, set:
+
+```
+UPIQAL_ALLOWED_ORIGINS = https://your-vercel-domain.vercel.app
+```
+
+This restricts cross-origin POSTs to just your Vercel frontend.
+
+### 8.5 · Local end-to-end smoke test with `vercel dev`
+
+```bash
+# terminal 1 — backend
+uvicorn web.main:app --host 127.0.0.1 --port 8000
+
+# terminal 2 — vercel dev with the proxy pointed at the local backend
+BACKEND_URL=http://127.0.0.1:8000 vercel dev
+```
+
+Open the URL `vercel dev` prints and run an analysis; requests should traverse Vercel → `api/proxy.py` → local FastAPI.

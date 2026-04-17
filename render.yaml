@@ -1,0 +1,18 @@
+# render.yaml — alternative deploy target (Render Web Service).
+# Use either Fly.io (fly.toml) OR Render (this file). Both point Vercel's
+# proxy at BACKEND_URL so the split architecture works identically.
+#
+# See: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: upiqal
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: standard           # 2 GB memory minimum; starter is likely to OOM
+    healthCheckPath: /healthz
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: UPIQAL_ALLOWED_ORIGINS
+        value: "*"

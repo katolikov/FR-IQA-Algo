@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>UPIQAL — Full-Reference Objective Image Quality Assessment and Automated Artifact Detection</title>
+  <meta name="description" content="A mathematical and data-driven synthesis of the Unified Probabilistic Image Quality and Artifact Locator (UPIQAL) by Artem Katolikov." />
+  <meta name="theme-color" content="#08090c" />
+
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=2" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&family=Newsreader:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/css/paper.css">
+</head>
+<body>
+  <div id="icon-sprite-host" aria-hidden="true"></div>
+
+  <!-- Navigation (shared chrome) -->
+  <header class="nav">
+    <div class="container nav__inner">
+      <a href="/" class="nav__brand" aria-label="UPIQAL home">
+        <img src="/static/favicon.svg?v=2" alt="" />
+        <span>UPIQAL <small>FR-IQA · v0.3</small></span>
+      </a>
+      <nav class="nav__links" aria-label="Primary">
+        <a class="nav__link" href="/">Analyzer</a>
+        <a class="nav__link" href="/paper" aria-current="page">
+          <svg aria-hidden="true"><use href="/static/icons.svg#icon-book-open"/></svg>
+          <span>Paper</span>
+        </a>
+      </nav>
+      <div class="nav__actions">
+        <button id="theme-toggle" class="icon-btn" aria-label="Toggle dark / light theme">
+          <svg><use href="/static/icons.svg#icon-sun"/></svg>
+        </button>
+        <a class="icon-btn" href="https://github.com/katolikov/FR-IQA-Algo"
+           target="_blank" rel="noopener" aria-label="View source on GitHub">
+          <svg><use href="/static/icons.svg#icon-github"/></svg>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <main class="container paper">
+
+    <!-- ====================================================================
+         Hero
+         ==================================================================== -->
+    <section class="paper-hero" data-enter>
+      <p class="eyebrow paper-hero__eyebrow">FR-IQA Research Paper</p>
+      <h1 class="paper-hero__title">
+        Full-Reference Objective Image Quality Assessment and Automated Artifact Detection
+      </h1>
+      <p style="color: var(--text-2); font-size: var(--text-md); margin-bottom: var(--sp-6); max-width: 56ch;">
+        A Mathematical and Data-Driven Synthesis
+      </p>
+      <div class="paper-hero__meta">
+        <span><strong>Author</strong> — Artem Katolikov</span>
+        <span>·</span>
+        <span><strong>Date</strong> — March 17, 2026</span>
+        <span>·</span>
+        <span><strong>Status</strong> — Preprint</span>
+      </div>
+
+      <blockquote class="abstract">
+        The objective evaluation of image quality and the automated, spatially precise detection
+        of visual artifacts remain among the most complex challenges in computational vision.
+        This report synthesizes a fully automated, data-driven Full-Reference Image Quality
+        Assessment (FR-IQA) system designed to replace subjective human Mean Opinion Score (MOS)
+        evaluations. By integrating dispersion-based texture tracking, multivariate uncertainty
+        modeling, optimal transport color science, and targeted frequency-domain spatial
+        heuristics, the proposed Unified Probabilistic Image Quality and Artifact Locator
+        (UPIQAL) framework provides both a global similarity score and a highly localized,
+        mathematically interpretable diagnostic artifact heatmap.
+      </blockquote>
+    </section>
+
+    <!-- ====================================================================
+         Two-column layout: sticky side-nav + body
+         ==================================================================== -->
+    <div class="paper-layout">
+
+      <aside class="paper-sidenav" aria-label="Paper sections">
+        <p class="paper-sidenav__label">Contents</p>
+        <ol>
+          <li><a href="#sota">State-of-the-Art Review</a></li>
+          <li><a href="#comparison">Comparison Table</a></li>
+          <li><a href="#formulation">Algorithm Formulation</a></li>
+          <li><a href="#math">Mathematical Foundation</a></li>
+          <li><a href="#pipeline">Implementation Pipeline</a></li>
+          <li><a href="#references">References</a></li>
+        </ol>
+      </aside>
+
+      <article class="paper-body prose" data-enter>
+
+        <!-- ================== State-of-the-Art Review ================== -->
+        <h2 id="sota">State-of-the-Art Review</h2>
+        <p>
+          The objective evaluation of image quality and the automated, spatially precise detection of
+          visual artifacts remain among the most complex challenges in computational vision.
+          Historically, the assessment of image fidelity relied on human visual inspection, formalized
+          through the Mean Opinion Score (MOS) framework. However, the subjective nature, high cost,
+          and inherent unscalability of MOS have driven the necessity for robust, automated, and
+          data-driven computational models.
+        </p>
+        <p>
+          The urgency for such models has accelerated exponentially with the advent of advanced
+          generative architectures, including text-to-image diffusion models and highly parameterized
+          Generative Adversarial Networks (GANs). In these contemporary paradigms, Image Quality
+          Assessment (IQA) models no longer serve merely as post-generation evaluation metrics; they
+          are actively deployed as critical perceptual reward signals within frameworks such as
+          Reinforcement Learning from Human Feedback (RLHF) and Direct Preference Optimization (DPO)
+          to align synthesized outputs with human visual preferences.
+        </p>
+
+        <div class="callout">
+          <div class="callout__kind">Shift 1 · Pixel → Structure</div>
+          <p>
+            Pixel-wise MSE and PSNR treat all localized errors with equal weight, entirely
+            disregarding structural context, spatial frequency dependencies, luminance masking, and
+            contrast masking. SSIM operates via a sliding Gaussian window to compute localized
+            similarities in luminance, contrast, and structure — the first step away from
+            mathematical error and toward perceptual similarity.
+          </p>
+        </div>
+
+        <p>
+          To rectify the perceptual inadequacy of pixel-wise error, the Structural Similarity Index
+          Measure (SSIM) and its multi-scale extension (MS-SSIM) were introduced. Subsequent
+          hand-crafted derivatives — FSIM (phase congruency and gradient magnitude), GMSD (global
+          gradient deviation), and VIF (Gaussian scale mixtures) — sought to further approximate
+          the Human Visual System (HVS). Despite higher correlations with MOS than PSNR, all
+          traditional metrics apply fixed, deterministic statistical models uniformly across all
+          image regions and are heavily sensitive to non-structural alterations such as global
+          color shifts.
+        </p>
+
+        <div class="callout">
+          <div class="callout__kind">Shift 2 · Structure → Deep Features</div>
+          <p>
+            LPIPS shifts the comparison from the raw pixel space to the latent feature space of
+            VGG / AlexNet / SqueezeNet. Hierarchical convolutional layers capture both low-level
+            edges and high-level semantic abstractions, yielding strong correlation with human
+            assessments — at the cost of interpretability and robustness to adversarial perturbations.
+          </p>
+        </div>
+
+        <p>
+          DISTS reconciles SSIM's structural rigor with LPIPS's semantic depth: it extracts
+          hierarchical VGG16 feature maps and computes their <em>global</em> spatial statistics
+          (means, variances, cross-covariances), explicitly separating structural fidelity from
+          textural similarity. A-DISTS further introduces a spatial <strong>dispersion index</strong>
+          to <em>locally</em> adapt the pooling strategy between structure and texture — without
+          supervised retraining on subjective scores.
+        </p>
+
+        <div class="callout">
+          <div class="callout__kind">Shift 3 · Determinism → Probability</div>
+          <p>
+            SUSS frames perceptual evaluation as explicit probabilistic density estimation, modeling
+            an image through a set of perceptual components represented by structured multivariate
+            Normal distributions. The final score becomes a weighted sum of component
+            log-probabilities — effectively a Mahalanobis distance in a learned perceptual space.
+          </p>
+        </div>
+
+        <p>
+          For color degradation, metrics such as <strong>EDOKS</strong> (Earth Mover's Distance and
+          Oklab Similarity) convert images into the Oklab perceptual color space and use the
+          Earth Mover's Distance to measure the minimum mathematical cost required to transform one
+          color distribution into another. For structural artifacts, explicit mathematical heuristics
+          remain vastly superior to CNN feature extraction: JPEG blocking is best quantified using
+          cross-difference filtering with <em>a contrario</em> statistical validation; Gibbs ringing
+          is isolated by dilated-edge variance ratios; Gaussian noise is estimated via wavelet
+          decomposition.
+        </p>
+
+        <!-- ================== Comparison Table ================== -->
+        <h2 id="comparison">Comparison Table</h2>
+        <p>Metric families compared by mechanism, feature space, advantages, and known failure modes.</p>
+
+        <div class="cmp-table-wrap">
+          <table class="cmp-table">
+            <thead>
+              <tr>
+                <th>Metric / Framework</th>
+                <th>Mechanism</th>
+                <th>Feature Space</th>
+                <th>Advantages</th>
+                <th>Limitations</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td data-label="Metric"><strong>SSIM / MS-SSIM</strong></td>
+                <td data-label="Mechanism">Local mean, variance, covariance pooling</td>
+                <td data-label="Space">Raw pixel (spatial)</td>
+                <td data-label="Advantages">Interpretable; basic luminance / contrast masking</td>
+                <td data-label="Limitations">Fails on texture resampling, color shifts, generative outputs</td>
+              </tr>
+              <tr>
+                <td data-label="Metric"><strong>LPIPS</strong></td>
+                <td data-label="Mechanism">Euclidean / cosine distance of normalized activations</td>
+                <td data-label="Space">Deep latent (VGG / AlexNet)</td>
+                <td data-label="Advantages">Aligns with human semantics; captures high-level features</td>
+                <td data-label="Limitations">Heavy; opaque spatial maps; sensitive to adversarial noise</td>
+              </tr>
+              <tr>
+                <td data-label="Metric"><strong>DISTS</strong></td>
+                <td data-label="Mechanism">Global statistical pooling of deep features</td>
+                <td data-label="Space">Deep latent (VGG16)</td>
+                <td data-label="Advantages">Robust to texture variance and mild spatial misalignment</td>
+                <td data-label="Limitations">Global pooling ignores local semantics; over-forgives blur</td>
+              </tr>
+              <tr>
+                <td data-label="Metric"><strong>A-DISTS</strong></td>
+                <td data-label="Mechanism">Dispersion-index-based adaptive pooling</td>
+                <td data-label="Space">Deep latent (VGG16)</td>
+                <td data-label="Advantages">Content-aware; separates texture and structure probabilistically</td>
+                <td data-label="Limitations">Dispersion entropy cost; weaker on very small patches</td>
+              </tr>
+              <tr>
+                <td data-label="Metric"><strong>SUSS</strong></td>
+                <td data-label="Mechanism">Multivariate Normal · Mahalanobis distance</td>
+                <td data-label="Space">Probabilistic pixel / feature</td>
+                <td data-label="Advantages">Uncertainty-aware; localized interpretable anomaly maps</td>
+                <td data-label="Limitations">Heavy generative training; dense covariance inversion</td>
+              </tr>
+              <tr>
+                <td data-label="Metric"><strong>EDOKS</strong></td>
+                <td data-label="Mechanism">Optimal transport (EMD) in perceptual uniform space</td>
+                <td data-label="Space">Oklab color space</td>
+                <td data-label="Advantages">Accurate color perception; immune to RGB bias</td>
+                <td data-label="Limitations">EMD optimization is $O(n^3 \log n)$ without Sinkhorn</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- ================== Algorithm Formulation ================== -->
+        <h2 id="formulation">Algorithm Formulation</h2>
+        <p>
+          No single existing metric simultaneously satisfies the requirements for deep semantic
+          understanding, probabilistic spatial interpretability, precise color modeling, and
+          deterministic artifact isolation. Therefore, the <strong>Unified Probabilistic Image
+          Quality and Artifact Locator (UPIQAL)</strong> synthesizes the dispersion-based texture
+          tracking of A-DISTS, the multivariate uncertainty modeling of SUSS, the optimal
+          transport color science of EDOKS, and targeted frequency-domain heuristics.
+        </p>
+        <p>
+          UPIQAL ingests a reference image $I_r$ and a distorted target image $I_t$. It operates
+          through five cascading modules, terminating in a unified aggregation head that outputs
+          a scalar score and a multi-channel spatial diagnostic tensor.
+        </p>
+
+        <details class="module" id="module-1" open>
+          <summary class="module__summary">
+            <span class="module__num">01</span>
+            <span class="module__title">Universal Preprocessing &amp; Normalization</span>
+            <svg class="module__chev" width="16" height="16"><use href="/static/icons.svg#icon-chevron-right"/></svg>
+          </summary>
+          <div class="module__body">
+            <p>
+              Standard algorithms frequently fail when deployed across disparate domains — natural
+              photographs, MRI, low-light endoscopic imagery. UPIQAL subjects $I_r$ and $I_t$ to
+              a rigorous normalization protocol. Min-max scaling bounds intensities to
+              $[0, 1]$; for modalities lacking standard reference ranges, a piece-wise linear
+              histogram matching algorithm aligns the target histogram modes and percentiles
+              (e.g. $p_{1}$ and $p_{99}$) to the reference, neutralizing irrelevant systemic
+              intensity shifts before perceptual comparison.
+            </p>
+          </div>
+        </details>
+
+        <details class="module" id="module-2">
+          <summary class="module__summary">
+            <span class="module__num">02</span>
+            <span class="module__title">Chromatic Transport Evaluator</span>
+            <svg class="module__chev" width="16" height="16"><use href="/static/icons.svg#icon-chevron-right"/></svg>
+          </summary>
+          <div class="module__body">
+            <p>
+              Deep convolutional feature extractors are notoriously poor at pure color evaluation —
+              their kernels are biased toward spatial frequencies and edge geometries. UPIQAL
+              isolates chromatic evaluation into a parallel module based on EDOKS. Images are
+              transformed from the non-linear sRGB space into the Oklab perceptual color space,
+              which decouples lightness $L$ from the opponent channels $a$ (green–red) and $b$
+              (blue–yellow) while maintaining strict perceptual uniformity.
+            </p>
+            <p>
+              Within Oklab, dense overlapping 3D color histograms are extracted and compared via
+              the Earth Mover's Distance (EMD) — framing color degradation as linear optimal
+              transport. This produces a dense <code>Color_Degradation_Map</code> that accurately
+              penalizes hue and saturation shifts without being confounded by structural
+              alterations.
+            </p>
+          </div>
+        </details>
+
+        <details class="module" id="module-3">
+          <summary class="module__summary">
+            <span class="module__num">03</span>
+            <span class="module__title">Hierarchical Deep Statistical Extractor</span>
+            <svg class="module__chev" width="16" height="16"><use href="/static/icons.svg#icon-chevron-right"/></svg>
+          </summary>
+          <div class="module__body">
+            <p>
+              To assess the interplay of structure and texture, UPIQAL integrates an advanced
+              A-DISTS variant. Reference and target propagate through a fixed, pre-trained VGG16
+              backbone; feature maps are intercepted at five hierarchical stages — from
+              <code>relu1_2</code> (fine gradients) up to <code>relu5_3</code> (deep semantic
+              objects). Rather than executing a direct Euclidean subtraction — which triggers the
+              LPIPS vulnerability of over-penalizing valid generative textures — the module
+              applies localized pooling with a 2D Hanning window, outputting spatial means, variances, and
+              cross-covariances for every channel at every location.
+            </p>
+            <p>
+              A spatial <strong>dispersion index</strong> — the ratio of local variance to local
+              mean — is passed through a sigmoid to generate a texture probability map
+              $P_{\mathrm{tex}}$. Where $P_{\mathrm{tex}} \to 1$ (grass, water) the system
+              prioritizes variance similarity, ignoring exact pixel alignment; where
+              $P_{\mathrm{tex}} \to 0$ (rigid geometry) it strictly penalizes structural warping
+              or blurring via cross-covariance.
+            </p>
+          </div>
+        </details>
+
+        <details class="module" id="module-4">
+          <summary class="module__summary">
+            <span class="module__num">04</span>
+            <span class="module__title">Probabilistic Uncertainty Mapper</span>
+            <svg class="module__chev" width="16" height="16"><use href="/static/icons.svg#icon-chevron-right"/></svg>
+          </summary>
+          <div class="module__body">
+            <p>
+              Inspired by the SUSS framework, UPIQAL models residual feature differences between
+              $I_r$ and $I_t$ as samples drawn from a structured multivariate Normal distribution.
+              During an offline, self-supervised generative phase, the model learns the
+              covariance matrices that define the acceptable limits of human-imperceptible
+              augmentations for varying image contents.
+            </p>
+            <p>
+              At inference, the Mahalanobis distance between the target's deep residuals and the
+              learned distribution of the reference yields an exact mathematical representation of
+              perceptual deviation. Locations with high $D_M^2$ fall into the low-probability
+              tails of the natural distribution and are classified as perceptual anomalies — this
+              produces the continuous <code>Global_Anomaly_Map</code>.
+            </p>
+          </div>
+        </details>
+
+        <details class="module" id="module-5">
+          <summary class="module__summary">
+            <span class="module__num">05</span>
+            <span class="module__title">Spatial Artifact Heuristics Engine</span>
+            <svg class="module__chev" width="16" height="16"><use href="/static/icons.svg#icon-chevron-right"/></svg>
+          </summary>
+          <div class="module__body">
+            <p>
+              The probabilistic and deep modules identify <em>where</em> a perceptual failure
+              occurs; classifying <em>what</em> specific artifact is present requires targeted
+              spatial and frequency heuristics.
+            </p>
+            <ul>
+              <li>
+                <strong>JPEG Blocking</strong> — horizontal and vertical cross-difference filters
+                detect grid discontinuities; an <em>a contrario</em> validation model computes the
+                Number of False Alarms (NFA) for periodic gradient spikes at modulo-8 intervals.
+              </li>
+              <li>
+                <strong>Gibbs Ringing</strong> — a binary edge skeleton is dilated to form a
+                proximity mask; the ratio of localized edge-vicinity variance to background
+                variance isolates unnatural oscillation energy.
+              </li>
+              <li>
+                <strong>Blur</strong> — edge-spread analysis + attenuation of high-frequency
+                components in the earliest convolutional layers.
+              </li>
+              <li>
+                <strong>Gaussian Noise</strong> — multi-level wavelet decomposition; noise
+                standard deviation estimated via median of the highest-frequency diagonal
+                subband.
+              </li>
+            </ul>
+            <p>
+              Discrete masks are spatially intersected with the <code>Global_Anomaly_Map</code>.
+              A fully connected regression head aggregates weighted sums of local log-probabilities,
+              outputting a single, comprehensive FR-IQA scalar calibrated to substitute human MOS.
+            </p>
+          </div>
+        </details>
+
+        <!-- ================== Mathematical Foundation ================== -->
+        <h2 id="math">Mathematical Foundation</h2>
+
+        <h3>1 · Statistical Pooling &amp; Adaptive Feature Separation</h3>
+        <p>
+          Feature representations at stage $k$ of VGG16 are tensors $F_r^{(k)}$ and $F_t^{(k)}$.
+          A continuous 2D Hanning window $w(u,v)$ over kernel size $K$ provides the localized
+          spatial kernel:
+        </p>
+
+        <div class="eqn">
+          <div class="eqn__tex">$$w(u,v) \;=\; \frac{1}{Z}\left(1 - \cos\frac{2\pi u}{K - 1}\right)\left(1 - \cos\frac{2\pi v}{K - 1}\right)$$</div>
+          <div class="eqn__num">(1)</div>
+        </div>
+
+        <p>where $Z$ is a normalization constant ensuring $\sum_{u,v} w(u,v) = 1$. The localized expected value for channel $c$ at coordinate $(x,y)$ is the window-weighted convolution:</p>
+
+        <div class="eqn">
+          <div class="eqn__tex">$$\mu^{(k)}_{r,c}(x,y) \;=\; \bigl(F^{(k)}_{r,c} \ast w\bigr)(x,y) \;+\; \epsilon$$</div>
+          <div class="eqn__num">(2)</div>
+        </div>
+
+        <p>Localized variances $\sigma^{2}_{r}$, $\sigma^{2}_{t}$ and cross-covariance $\sigma_{rt}$ follow the standard definitions centered around these expectations. From SSIM, the luminance and structural similarity terms are:</p>
+
+        <div class="eqn">
+          <div class="eqn__tex">$$l(x) \;=\; \frac{2\mu_r\mu_t + C_1}{\mu_r^{2} + \mu_t^{2} + C_1}, \qquad s(x) \;=\; \frac{2\sigma_{rt} + C_2}{\sigma_r^{2} + \sigma_t^{2} + C_2}$$</div>
+          <div class="eqn__num">(3)</div>
+        </div>
+
+        <p>The <strong>dispersion index</strong> is $\delta(x,y) = \sigma^{2}(x,y) / \mu(x,y)$. A logistic sigmoid maps it to a texture probability:</p>
+
+        <div class="eqn">
+          <div class="eqn__tex">$$P_{\mathrm{tex}}(x,y) \;=\; \frac{1}{1 + \exp\!\bigl(-\alpha\,(\delta(x,y) - \beta)\bigr)}$$</div>
+          <div class="eqn__num">(4)</div>
+        </div>
+
+        <p>Aggregation linearly interpolates weights so that high-variance regions prioritize $s(x)$ (forgiving structural misalignment) and low-variance regions enforce $l(x)$ (strict geometry).</p>
+
+        <h3>2 · Probabilistic Uncertainty Modeling</h3>
+        <p>
+          Let the residual vector at location $(x,y)$ across concatenated channels be
+          $\Delta f = f_t - f_r \in \mathbb{R}^{D}$. Acceptable human-imperceptible perturbations
+          are modeled as a multivariate Normal
+          $\mathcal{N}(\mathbf{0},\,\Sigma_{x,y})$:
+        </p>
+
+        <div class="eqn">
+          <div class="eqn__tex">$$p(\Delta f \mid \Sigma) \;=\; \frac{1}{(2\pi)^{D/2}\,\lvert\Sigma\rvert^{1/2}}\;\exp\!\left(-\frac{1}{2}\,\Delta f^{\top}\,\Sigma^{-1}\,\Delta f\right)$$</div>
+          <div class="eqn__num">(5)</div>
+        </div>
+
+        <p>The exponent is the squared Mahalanobis distance $D_{M}^{2} = \Delta f^{\top}\,\Sigma^{-1}\,\Delta f$. Because $D$ is massive, the precision matrix is parameterized via a Cholesky decomposition:</p>
+
+        <div class="eqn">
+          <div class="eqn__tex">$$\Sigma^{-1} \;=\; L\,L^{\top}, \qquad D_{M}^{2} \;=\; \bigl\lVert L^{\top}\,\Delta f \bigr\rVert_{2}^{2}$$</div>
+          <div class="eqn__num">(6)</div>
+        </div>
+
+        <p>where $L$ is a sparse, structured lower-triangular matrix learned during training. The spatial tensor of $D_M^2$ is the <code>Global_Anomaly_Map</code>; the final score is the negative sum of log-probabilities, normalized to $[0,1]$.</p>
+
+        <h3>3 · Optimal Transport for Chromatic Degradation</h3>
+        <p>A reference patch is represented by a color signature $P = \{(m_i, w_i)\}$ where $m_i \in \mathbb{R}^3$ are Oklab coordinates and $w_i$ is the histogram mass. The target patch $Q = \{(n_j, v_j)\}$ is similarly defined. The ground distance $d_{ij} = \lVert m_i - n_j \rVert$ is the perceptual color difference. The Earth Mover's Distance is the linear program:</p>
+
+        <div class="eqn">
+          <div class="eqn__tex">$$\mathrm{EMD}(P, Q) \;=\; \min_{f_{ij} \,\ge\, 0}\; \sum_{i}\sum_{j} d_{ij}\, f_{ij}$$</div>
+          <div class="eqn__num">(7)</div>
+        </div>
+
+        <p>subject to the mass-preservation constraints:</p>
+
+        <div class="eqn">
+          <div class="eqn__tex">$$\sum_{j} f_{ij} \,\le\, w_{i}, \qquad \sum_{i} f_{ij} \,\le\, v_{j}, \qquad \sum_{i,j} f_{ij} \;=\; \min\!\left(\sum_{i} w_{i},\; \sum_{j} v_{j}\right)$$</div>
+          <div class="eqn__num">(8)</div>
+        </div>
+
+        <p>Exact LP is $\mathcal{O}(n^{3}\log n)$. The pipeline instead uses the Sinkhorn–Knopp algorithm, adding an entropy regularizer $\lambda\,H(f)$ that yields a matrix-scaling iteration suitable for GPU hardware.</p>
+
+        <h3>4 · Mathematical Heuristics for Artifact Localization</h3>
+
+        <p><strong>Blocking.</strong> Let $Y$ be the luminance channel. The horizontal cross-difference filter is $D_{h}(x,y) = Y(x + 1,\,y) - Y(x,\,y)$. To detect $8 \times 8$ DCT boundaries, an accumulation vector $A_{h}[k]$ is computed for offsets $k \in \{0, \ldots, 7\}$:</p>
+
+        <div class="eqn">
+          <div class="eqn__tex">$$A_{h}[k] \;=\; \sum_{x \,\equiv\, k \,(\mathrm{mod}\ 8)} \; \sum_{y} \bigl\lvert D_{h}(x,y) \bigr\rvert$$</div>
+          <div class="eqn__num">(9)</div>
+        </div>
+
+        <p>An <em>a contrario</em> validation step computes the Number of False Alarms (NFA). If $\mathrm{NFA}(k) < \tau$, the entire grid phase is flagged as blocking distortion.</p>
+
+        <p><strong>Ringing.</strong> A Sobel operator $S$ extracts the edge map $E$. Morphological dilation $E_{d} = E \oplus B$ defines the proximity zone. Local variances inside and outside are compared:</p>
+
+        <div class="eqn">
+          <div class="eqn__tex">$$R(x,y) \;=\; \frac{\mathrm{Var}_{E_{d}}\!\bigl(Y\bigr)}{\mathrm{Var}_{\overline{E_{d}}}\!\bigl(Y\bigr)}$$</div>
+          <div class="eqn__num">(10)</div>
+        </div>
+
+        <p>If $R > \gamma$, high-frequency parasitic oscillations are confirmed and the region is classified into the <code>Ringing_Mask</code>.</p>
+
+        <!-- ================== Implementation Pipeline ================== -->
+        <h2 id="pipeline">Implementation Pipeline</h2>
+
+        <p>
+          The three parallel execution branches converge into an aggregation head that produces
+          the final score and diagnostic tensor.
+        </p>
+
+        <div class="pipeline">
+          <svg viewBox="0 0 960 420" style="width:100%;height:auto;max-width:840px;display:block;margin:0 auto"
+               aria-label="UPIQAL pipeline diagram"
+               xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+                      markerWidth="7" markerHeight="7" orient="auto">
+                <path d="M0,0 L10,5 L0,10 Z" fill="var(--text-2)"/>
+              </marker>
+              <marker id="arrow-accent" viewBox="0 0 10 10" refX="9" refY="5"
+                      markerWidth="7" markerHeight="7" orient="auto">
+                <path d="M0,0 L10,5 L0,10 Z" fill="var(--accent)"/>
+              </marker>
+            </defs>
+
+            <!-- Section labels -->
+            <text x="95"  y="30" text-anchor="middle" font-size="12" font-weight="600"
+                  letter-spacing="2" fill="var(--text-3)">INPUTS</text>
+            <text x="480" y="30" text-anchor="middle" font-size="12" font-weight="600"
+                  letter-spacing="2" fill="var(--text-3)">PARALLEL BRANCHES</text>
+            <text x="860" y="30" text-anchor="middle" font-size="12" font-weight="600"
+                  letter-spacing="2" fill="var(--text-3)">OUTPUT</text>
+
+            <!-- Input node -->
+            <g>
+              <rect x="20" y="175" width="150" height="70" rx="14"
+                    fill="var(--surface-2)" stroke="var(--hairline-strong)" stroke-width="1"/>
+              <text x="95" y="210" text-anchor="middle" fill="var(--text-0)"
+                    font-family="Newsreader, Georgia, serif" font-style="italic"
+                    font-size="22" font-weight="500">I<tspan font-size="14" dy="4">r</tspan><tspan dy="-4">, </tspan><tspan font-size="22" dy="0">I</tspan><tspan font-size="14" dy="4">t</tspan></text>
+              <text x="95" y="232" text-anchor="middle" fill="var(--text-2)" font-size="11">reference · target</text>
+            </g>
+
+            <!-- Branch A: Deep Features -->
+            <g>
+              <rect x="290" y="70" width="280" height="70" rx="14"
+                    fill="var(--surface-2)" stroke="var(--hairline-strong)" stroke-width="1"/>
+              <text x="430" y="103" text-anchor="middle" fill="var(--text-0)"
+                    font-size="15" font-weight="600">Deep Feature Statistics</text>
+              <text x="430" y="124" text-anchor="middle" fill="var(--text-2)" font-size="11.5">
+                VGG16 · A-DISTS adaptive pooling
+              </text>
+            </g>
+
+            <!-- Branch B: Chromatic Transport -->
+            <g>
+              <rect x="290" y="175" width="280" height="70" rx="14"
+                    fill="var(--surface-2)" stroke="var(--hairline-strong)" stroke-width="1"/>
+              <text x="430" y="208" text-anchor="middle" fill="var(--text-0)"
+                    font-size="15" font-weight="600">Chromatic Transport</text>
+              <text x="430" y="229" text-anchor="middle" fill="var(--text-2)" font-size="11.5">
+                Oklab · Earth Mover's Distance (Sinkhorn)
+              </text>
+            </g>
+
+            <!-- Branch C: Spatial Heuristics -->
+            <g>
+              <rect x="290" y="280" width="280" height="70" rx="14"
+                    fill="var(--surface-2)" stroke="var(--hairline-strong)" stroke-width="1"/>
+              <text x="430" y="313" text-anchor="middle" fill="var(--text-0)"
+                    font-size="15" font-weight="600">Spatial Heuristics</text>
+              <text x="430" y="334" text-anchor="middle" fill="var(--text-2)" font-size="11.5">
+                Blocking · Ringing · Noise · Blur
+              </text>
+            </g>
+
+            <!-- Aggregation (accent) -->
+            <g>
+              <rect x="690" y="175" width="170" height="70" rx="14"
+                    fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+              <text x="775" y="205" text-anchor="middle" fill="var(--accent)"
+                    font-size="15" font-weight="700">Aggregation</text>
+              <text x="775" y="226" text-anchor="middle" fill="var(--text-1)" font-size="11.5">
+                log-probability sum
+              </text>
+            </g>
+
+            <!-- Output -->
+            <g>
+              <rect x="780" y="310" width="160" height="70" rx="14"
+                    fill="var(--surface-1)" stroke="var(--hairline-strong)" stroke-width="1"/>
+              <text x="860" y="340" text-anchor="middle" fill="var(--text-0)"
+                    font-size="15" font-weight="600">Score + Maps</text>
+              <text x="860" y="361" text-anchor="middle" fill="var(--text-2)" font-size="11.5">
+                scalar ∈ [0, 1] · 5 channels
+              </text>
+            </g>
+
+            <!-- Connecting lines: inputs → branches -->
+            <g fill="none" stroke="var(--hairline-strong)" stroke-width="1.5">
+              <path d="M170,200 C230,200 230,105 290,105" marker-end="url(#arrow)"/>
+              <path d="M170,210 L290,210"                 marker-end="url(#arrow)"/>
+              <path d="M170,220 C230,220 230,315 290,315" marker-end="url(#arrow)"/>
+            </g>
+
+            <!-- Branches → aggregation -->
+            <g fill="none" stroke="var(--hairline-strong)" stroke-width="1.5">
+              <path d="M570,105 C630,105 630,200 690,200"  marker-end="url(#arrow)"/>
+              <path d="M570,210 L690,210"                  marker-end="url(#arrow)"/>
+              <path d="M570,315 C630,315 630,220 690,220"  marker-end="url(#arrow)"/>
+            </g>
+
+            <!-- Aggregation → output (accent arrow) -->
+            <g fill="none" stroke="var(--accent)" stroke-width="2">
+              <path d="M775,245 C775,280 780,295 830,310" marker-end="url(#arrow-accent)"/>
+            </g>
+          </svg>
+        </div>
+
+        <p>The pipeline outputs a comprehensive dictionary:</p>
+
+        <div class="output-spec">
+          <div><strong>score</strong><span>Scalar $[0,1]$ — the FR-IQA score, calibrated to substitute human MOS.</span></div>
+          <div><strong>anomaly</strong><span>Continuous spatial map of $D_M^2$ — absolute perceptual deviation.</span></div>
+          <div><strong>color</strong><span>Dense Oklab EMD map — chromatic degradation magnitude.</span></div>
+          <div><strong>structure</strong><span>Local structural similarity from SSIM $\times$ deep features.</span></div>
+          <div><strong>blocking</strong><span>Binary mask of detected DCT block boundaries (NFA-validated).</span></div>
+          <div><strong>ringing</strong><span>Dilated-edge variance-ratio mask for Gibbs oscillations.</span></div>
+          <div><strong>dominant_artifact</strong><span>Argmax over HF-energy-gated severity contributions.</span></div>
+        </div>
+
+        <p>
+          By synthesizing deterministic frequency-domain heuristics with the semantic depth of
+          convolutional features, and enveloping both within a rigorous multivariate probabilistic
+          framework, UPIQAL offers an exhaustive, fully automated, and highly interpretable
+          solution to the complexities of modern Image Quality Assessment.
+        </p>
+
+        <!-- ================== References ================== -->
+        <h2 id="references">References</h2>
+        <div class="refs">
+          <ol>
+            <li>Zoom-IQA: Image Quality Assessment with Reliable Region-Aware Reasoning. <a href="https://arxiv.org/html/2601.02918v1" target="_blank" rel="noopener">arXiv:2601.02918</a>.</li>
+            <li>Structural similarity index measure. <a href="https://en.wikipedia.org/wiki/Structural_similarity_index_measure" target="_blank" rel="noopener">Wikipedia</a>.</li>
+            <li>Structured Uncertainty Similarity Score (SUSS). <a href="https://arxiv.org/html/2512.03701v1" target="_blank" rel="noopener">arXiv:2512.03701</a>.</li>
+            <li>Analysis of PSNR, SSIM, LPIPS in the context of human perception. ResearchGate, 2026.</li>
+            <li>R-LPIPS: An Adversarially Robust Perceptual Similarity Metric. <a href="https://arxiv.org/pdf/2307.15157" target="_blank" rel="noopener">arXiv:2307.15157</a>.</li>
+            <li>New Texture Similarity Metrics. University of Michigan.</li>
+            <li>SSIM vs. LPIPS — Patsnap Eureka.</li>
+            <li>What Is LPIPS and How It Measures Perceptual Similarity — Patsnap Eureka.</li>
+            <li>Learned Perceptual Image Patch Similarity (LPIPS) — PyTorch-Metrics docs.</li>
+            <li>Evaluation of Objective Image Quality Metrics for High-Fidelity Image Compression. <a href="https://arxiv.org/html/2509.13150v1" target="_blank" rel="noopener">arXiv:2509.13150</a>.</li>
+            <li>Optimization results by DISTS, LPIPS, and DeepWSD — ResearchGate.</li>
+            <li>Comparison of Full-Reference Image Quality Models for Optimization. PMC.</li>
+            <li>dingkeyan93/DISTS — <a href="https://github.com/dingkeyan93/DISTS" target="_blank" rel="noopener">GitHub</a>.</li>
+            <li>Full-Reference Image Quality Assessment with Transformer and DISTS. MDPI.</li>
+            <li>DISTS PyTorch implementation. GitHub.</li>
+            <li>Image Quality Assessment: Unifying Structure and Texture Similarity. NYU CNS.</li>
+            <li>Locally Adaptive Structure and Texture Similarity for Image Quality Assessment. <a href="https://arxiv.org/abs/2110.08521" target="_blank" rel="noopener">arXiv:2110.08521</a>.</li>
+            <li>A-DISTS publication. CityU Scholars.</li>
+            <li>A-DISTS review. Liner.</li>
+            <li>Adaptive Structure and Texture Similarity Metric. ResearchGate.</li>
+            <li>SUSS preprint — ResearchGate.</li>
+            <li>Localizing Perceptual Artifacts in Synthetic Images. <a href="https://www.mdpi.com/2079-9292/15/5/916" target="_blank" rel="noopener">MDPI Electronics</a>.</li>
+            <li>A New Image Similarity Metric — Perceptual and Transparent Geometric and Chromatic Assessment. <a href="https://arxiv.org/html/2601.19680v1" target="_blank" rel="noopener">arXiv:2601.19680</a>.</li>
+            <li>Similarity and Quality Metrics for MR Image-to-Image Translation. <a href="https://arxiv.org/html/2405.08431v4" target="_blank" rel="noopener">arXiv:2405.08431</a>.</li>
+            <li>The Earth Mover's Distance (EMD). <a href="http://infolab.stanford.edu/pub/cstr/reports/cs/tr/99/1620/CS-TR-99-1620.ch4.pdf" target="_blank" rel="noopener">Stanford InfoLab</a>.</li>
+            <li>Helmlab vs Oklab vs CIEDE2000 — Medium, 2026.</li>
+            <li>MUG: A Parameterless No-Reference JPEG Quality Evaluator. <a href="https://arxiv.org/pdf/1609.03461" target="_blank" rel="noopener">arXiv:1609.03461</a>.</li>
+            <li>Local JPEG Grid Detector via Blocking Artifacts. <a href="http://www.ipol.im/pub/art/2020/283/" target="_blank" rel="noopener">IPOL Journal</a>.</li>
+            <li>Local JPEG Grid Detector PDF. IPOL.</li>
+            <li>Image Deconvolution Ringing Artifact Detection and Removal via PSF Frequency Analysis. ResearchGate.</li>
+            <li>Image Quality Assessment for Gibbs Ringing Reduction. <a href="https://www.mdpi.com/1999-4893/16/2/96" target="_blank" rel="noopener">MDPI Algorithms</a>.</li>
+            <li>Edge Map Guided Adaptive Post-Filter for Blocking and Ringing Artifacts. MERL TR2004-003.</li>
+            <li>Removal of blocking and ringing artifacts in JPEG-coded images. ResearchGate.</li>
+            <li>Measurement of ringing artifacts in JPEG images. ResearchGate.</li>
+            <li>Similarity and quality metrics for MR image-to-image translation. ResearchGate.</li>
+            <li>Detection of Image Artifacts Using Improved Cascade Region-Based CNN. MDPI.</li>
+            <li>Reference-Free Image Quality Metric for Degradation and Reconstruction Artifacts. <a href="https://arxiv.org/html/2405.02208v1" target="_blank" rel="noopener">arXiv:2405.02208</a>.</li>
+            <li>The Earth Mover's Distance as a Metric for Image Retrieval. CMU SCS.</li>
+            <li>Multivariate normal distribution (Reddit discussion).</li>
+            <li>No-Reference Quality Assessment — UT Austin LIVE.</li>
+            <li>Quantification of ring artifact visibility in CT. IACL SPIE.</li>
+            <li>Quantification of ring artifact visibility in CT (PDF). ResearchGate.</li>
+            <li>No-reference IQA based on noise, blurring and blocking. ResearchGate.</li>
+            <li>Blur and Ringing Artifact Measurement in Image Compression using Wavelet Transform. Academia.edu.</li>
+            <li>sunwei925/UIQA — <a href="https://github.com/sunwei925/UIQA" target="_blank" rel="noopener">GitHub</a>.</li>
+            <li>What is Adaptive Average Pooling — Stack Overflow.</li>
+          </ol>
+        </div>
+
+      </article>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer__inner">
+      <div><strong style="color: var(--text-0);">UPIQAL</strong> · Full-Reference Image Quality &amp; Artifact Locator · 2026</div>
+      <div class="footer__links">
+        <a href="/">Analyzer</a>
+        <a href="/paper">Paper</a>
+        <a href="https://github.com/katolikov/FR-IQA-Algo" target="_blank" rel="noopener">
+          <svg width="14" height="14" style="vertical-align:-2px;margin-right:4px"><use href="/static/icons.svg#icon-github"/></svg>
+          Source
+          <svg width="12" height="12" style="vertical-align:-2px"><use href="/static/icons.svg#icon-external"/></svg>
+        </a>
+      </div>
+    </div>
+  </footer>
+
+  <script type="module" src="/static/js/paper.js"></script>
+</body>
+</html>

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="web/static/favicon-128.png" alt="UPIQAL" width="96" height="96" />
+  <img src="web/static/favicon.svg" alt="UPIQAL" width="96" height="96" />
 </p>
 
 <h1 align="center">UPIQAL · FR-IQA Algo</h1>
@@ -43,7 +43,39 @@ python upiqal_cli.py \
 # 3) Web UI — upload two images, inspect heatmaps, export
 python -m uvicorn web.main:app --host 127.0.0.1 --port 8765
 # open http://127.0.0.1:8765
+# The new research paper is served at http://127.0.0.1:8765/paper
 ```
+
+## Deploy · Split Architecture (Vercel + CPU host)
+
+PyTorch + VGG16 weights far exceed Vercel's serverless Python size limit, so inference runs on a separate CPU container host while Vercel serves the static frontend. The two halves are glued together by a 1-file proxy (`api/proxy.py`).
+
+```
+Vercel (static)                              CPU Host (FastAPI + torch)
+├── web/public/index.html  ─── POST /api/* ──▶ web/main.py (/api/compare …)
+├── web/public/paper.html                      UPIQAL model (on startup)
+└── api/proxy.py (serverless fn)
+```
+
+**Step 1 — deploy the backend** (choose one):
+
+```bash
+# Fly.io
+fly launch --copy-config --name upiqal --no-deploy
+fly deploy
+# → https://upiqal.fly.dev
+
+# or Render — push to GitHub, point Render at the repo; it auto-discovers render.yaml
+```
+
+**Step 2 — point Vercel at the backend**:
+
+```bash
+vercel env add BACKEND_URL production   # paste https://upiqal.fly.dev
+vercel --prod
+```
+
+The same repo layout serves both: `vercel.json` publishes only `web/public/` + `api/proxy.py`; the Dockerfile builds the full FastAPI stack.
 
 Representative scores for the three shipped sanity tests:
 

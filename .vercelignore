@@ -1,0 +1,33 @@
+# Vercel deploys only the static frontend (web/public/) + api/proxy.py.
+# Everything else below is excluded to keep the Vercel build artifact tiny
+# and avoid accidentally shipping the full ML package / model weights.
+
+upiqal/
+weights/
+tests/
+analysis/
+docs/
+venv/
+.venv/
+upiqal_cli.py
+upiqal_*_2026*
+upiqal_*_2025*
+upiqal_web_T*.png
+upiqal_photo_compare_*
+upiqal_results_*
+upiqal_same_image_*
+upiqal_spot_diff_*
+upiqal_img2_*
+input.png
+left.png
+right.png
+image*.png
+pyproject.toml
+HOWTO.md
+Dockerfile
+fly.toml
+render.yaml
+.dockerignore
+.DS_Store
+__pycache__/
+*.pyc

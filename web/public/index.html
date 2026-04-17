@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>UPIQAL — Full-Reference Image Quality Analyzer</title>
+  <meta name="description" content="Upload two images and get a precise, interpretable FR-IQA score with localized artifact heatmaps for blocking, ringing, noise, color shift, and blur." />
+  <meta name="theme-color" content="#08090c" />
+
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=2" />
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon-32.png" />
+  <link rel="icon" type="image/png" sizes="192x192" href="/static/favicon-192.png" />
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/favicon-192.png" />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+  <!-- inline SVG sprite (shared icon library) -->
+  <div id="icon-sprite-host" aria-hidden="true"></div>
+  <script>
+    // Inject SVG sprite inline so <use href="#id"> works without CORS.
+    fetch('/static/icons.svg').then(r => r.text()).then(t => {
+      document.getElementById('icon-sprite-host').innerHTML = t;
+    });
+  </script>
+
+  <!-- ================================================================= -->
+  <!-- Navigation                                                        -->
+  <!-- ================================================================= -->
+  <header class="nav">
+    <div class="container nav__inner">
+      <a href="/" class="nav__brand" aria-label="UPIQAL home">
+        <img src="/static/favicon.svg?v=2" alt="" />
+        <span>
+          UPIQAL
+          <small>FR-IQA · v0.3</small>
+        </span>
+      </a>
+
+      <nav class="nav__links" aria-label="Primary">
+        <a class="nav__link" href="/" aria-current="page">Analyzer</a>
+        <a class="nav__link" href="/paper">
+          <svg aria-hidden="true"><use href="/static/icons.svg#icon-book-open"/></svg>
+          <span>Paper</span>
+        </a>
+      </nav>
+
+      <div class="nav__actions">
+        <button id="theme-toggle" class="icon-btn" aria-label="Toggle dark / light theme" title="Toggle theme">
+          <svg><use href="/static/icons.svg#icon-sun"/></svg>
+        </button>
+        <a class="icon-btn" href="https://github.com/katolikov/FR-IQA-Algo"
+           target="_blank" rel="noopener" aria-label="View source on GitHub" title="View source on GitHub">
+          <svg><use href="/static/icons.svg#icon-github"/></svg>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- =============================================================== -->
+    <!-- Hero                                                            -->
+    <!-- =============================================================== -->
+    <section class="hero" data-enter>
+      <p class="eyebrow hero__eyebrow">Full-Reference Image Quality Assessment</p>
+      <h1 class="hero__title">
+        Measure <span class="accent">perceived quality</span><br/> with mathematical precision.
+      </h1>
+      <p class="hero__lede">
+        UPIQAL synthesizes deep feature statistics, optimal-transport color science, and
+        frequency-domain artifact heuristics into a single interpretable score — with
+        spatially localized diagnostics for blocking, ringing, noise, color shift, and blur.
+      </p>
+      <div class="hero__meta">
+        <span class="chip chip--accent">
+          <svg width="12" height="12"><use href="/static/icons.svg#icon-sparkle"/></svg>
+          New: read the paper
+        </span>
+        <a class="chip" href="/paper">UPIQAL algorithm → <svg width="12" height="12" style="vertical-align:-2px"><use href="/static/icons.svg#icon-arrow-right"/></svg></a>
+      </div>
+    </section>
+
+    <!-- =============================================================== -->
+    <!-- Step 1: Upload                                                  -->
+    <!-- =============================================================== -->
+    <section aria-labelledby="step-upload" data-enter>
+      <header class="step-header">
+        <div>
+          <p class="eyebrow">Step 01</p>
+          <h2 id="step-upload" class="step-header__title">Provide reference &amp; target</h2>
+        </div>
+        <p class="step-header__hint">Images are processed on the backend, never stored.</p>
+      </header>
+
+      <div class="analyzer">
+        <!-- Reference -->
+        <div class="drop" id="drop-ref">
+          <div class="drop__label">
+            <span class="eyebrow">Reference</span>
+            <span class="chip chip--accent">Required</span>
+          </div>
+          <input id="input-ref" class="drop__input" type="file"
+                 accept="image/*,.raw,.bin,.nv21,.npy" aria-label="Select reference image" />
+
+          <div class="drop__empty" id="empty-ref">
+            <svg><use href="/static/icons.svg#icon-upload"/></svg>
+            <p><strong>Drop a file here</strong> or <em>browse</em></p>
+            <span class="drop__hint" data-slot="filename">PNG · JPEG · RAW · NV21 · NPY</span>
+          </div>
+
+          <div class="drop__preview is-hidden" id="preview-ref">
+            <img alt="Reference preview" />
+          </div>
+
+          <button class="drop__remove is-hidden" id="remove-ref" type="button" aria-label="Remove reference image">
+            <svg><use href="/static/icons.svg#icon-x"/></svg>
+          </button>
+        </div>
+
+        <!-- Target -->
+        <div class="drop" id="drop-tgt">
+          <div class="drop__label">
+            <span class="eyebrow">Target</span>
+            <span class="chip chip--accent">Required</span>
+          </div>
+          <input id="input-tgt" class="drop__input" type="file"
+                 accept="image/*,.raw,.bin,.nv21,.npy" aria-label="Select target image" />
+
+          <div class="drop__empty" id="empty-tgt">
+            <svg><use href="/static/icons.svg#icon-upload"/></svg>
+            <p><strong>Drop a file here</strong> or <em>browse</em></p>
+            <span class="drop__hint" data-slot="filename">PNG · JPEG · RAW · NV21 · NPY</span>
+          </div>
+
+          <div class="drop__preview is-hidden" id="preview-tgt">
+            <img alt="Target preview" />
+          </div>
+
+          <button class="drop__remove is-hidden" id="remove-tgt" type="button" aria-label="Remove target image">
+            <svg><use href="/static/icons.svg#icon-x"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Raw options (shown only when a raw/binary file is selected) -->
+      <div id="raw-options" class="raw-options is-hidden">
+        <p class="eyebrow">Raw / binary input</p>
+        <div class="raw-options__grid">
+          <div class="field">
+            <label class="field__label" for="raw-width">Width (px)</label>
+            <input id="raw-width" class="field__input" type="number" min="1" placeholder="640" />
+          </div>
+          <div class="field">
+            <label class="field__label" for="raw-height">Height (px)</label>
+            <input id="raw-height" class="field__input" type="number" min="1" placeholder="480" />
+          </div>
+          <div class="field">
+            <label class="field__label" for="raw-pixel-format">Pixel format</label>
+            <select id="raw-pixel-format" class="field__select">
+              <option value="RGB888">RGB888</option>
+              <option value="NV21">NV21 (YUV420SP)</option>
+              <option value="GRAY8">GRAY8</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Run bar -->
+      <div class="run-bar">
+        <div class="run-bar__group">
+          <label class="field__label" for="output-format">Output</label>
+          <select id="output-format" class="field__select">
+            <option value="png">PNG (default)</option>
+            <option value="npy">NumPy (.npy)</option>
+            <option value="raw">Raw float32 (.raw)</option>
+            <option value="bin">Binary float32 (.bin)</option>
+            <option value="nv21">NV21 (YUV420SP)</option>
+          </select>
+        </div>
+        <button id="btn-run" class="btn btn--primary" disabled>
+          <svg id="btn-spinner" class="spinner is-hidden"><use href="/static/icons.svg#icon-spinner"/></svg>
+          <span id="btn-label">Run UPIQAL Analysis</span>
+          <svg width="14" height="14"><use href="/static/icons.svg#icon-arrow-right"/></svg>
+        </button>
+      </div>
+    </section>
+
+    <!-- =============================================================== -->
+    <!-- Step 2: Results                                                 -->
+    <!-- =============================================================== -->
+    <section id="results" class="results is-hidden" aria-labelledby="step-results">
+      <header class="step-header">
+        <div>
+          <p class="eyebrow">Step 02</p>
+          <h2 id="step-results" class="step-header__title">Analysis</h2>
+        </div>
+      </header>
+
+      <!-- Summary cards -->
+      <div class="results__summary">
+        <!-- Score -->
+        <div class="card score-card">
+          <p class="eyebrow">FR-IQA Score</p>
+          <div class="score-ring">
+            <svg width="200" height="200" viewBox="0 0 200 200" aria-hidden="true">
+              <defs>
+                <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%"   stop-color="#7A3731"/>
+                  <stop offset="100%" stop-color="#5E3A23"/>
+                </linearGradient>
+              </defs>
+              <circle class="score-ring__track" cx="100" cy="100" r="86" stroke-width="12"/>
+              <circle class="score-ring__bar"   cx="100" cy="100" r="86" stroke-width="12"
+                      stroke-dasharray="540" stroke-dashoffset="540"/>
+            </svg>
+            <div class="score-ring__value">
+              <small>0 – 1</small>
+              <span id="score-value">--</span>
+            </div>
+          </div>
+          <span id="score-label" class="score-label">—</span>
+        </div>
+
+        <!-- Key findings -->
+        <div class="card findings">
+          <div class="findings__block">
+            <p class="eyebrow">Dominant artifact</p>
+            <p id="dominant-artifact" class="findings__value">—</p>
+          </div>
+          <div class="divider"></div>
+          <div class="findings__block">
+            <p class="eyebrow">Affected area</p>
+            <p id="affected-area" class="findings__value findings__value--big">—</p>
+          </div>
+          <div class="divider"></div>
+          <div class="findings__block">
+            <p class="eyebrow">Pipeline</p>
+            <p style="color: var(--text-1); font-size: var(--text-sm);">
+              A-DISTS · SUSS · EDOKS · Spatial heuristics
+            </p>
+          </div>
+        </div>
+
+        <!-- Severity breakdown -->
+        <div class="card severity">
+          <p class="eyebrow">Severity breakdown</p>
+          <div id="severity-rows" class="severity__rows"></div>
+        </div>
+      </div>
+
+      <!-- Workspace: gallery + viewer -->
+      <div class="workspace">
+        <div class="card gallery">
+          <p class="eyebrow">Diagnostic layers</p>
+          <div id="hm-gallery" class="gallery__grid"></div>
+        </div>
+
+        <div class="card viewer">
+          <div class="viewer__head">
+            <div>
+              <p class="eyebrow">Viewer</p>
+              <h3 id="viewer-title" class="viewer__title">Anomaly Overlay</h3>
+            </div>
+            <button id="btn-save-main" class="btn btn--secondary" title="Save current heatmap">
+              <svg width="14" height="14"><use href="/static/icons.svg#icon-download"/></svg>
+              <span>Save</span>
+            </button>
+          </div>
+          <div id="viewer-frame" class="viewer__frame">
+            <canvas id="viewer-canvas"></canvas>
+            <div id="zoom-badge" class="viewer__badge">1.0×</div>
+            <div id="viewer-hint" class="viewer__hint">
+              <div>Scroll to zoom · Drag to pan · Double-click to reset</div>
+            </div>
+          </div>
+          <div class="viewer__slider">
+            <label>Overlay</label>
+            <span style="font-size:10px;color:var(--text-3);">0%</span>
+            <input id="opacity-slider" type="range" min="0" max="100" value="100" style="--val:100%" />
+            <span style="font-size:10px;color:var(--text-3);">100%</span>
+            <span id="opacity-val" class="val">100%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Originals -->
+      <div class="pair">
+        <div class="card">
+          <p class="eyebrow" style="margin-bottom:12px">Reference</p>
+          <img id="result-ref" alt="Reference" />
+        </div>
+        <div class="card">
+          <p class="eyebrow" style="margin-bottom:12px">Target</p>
+          <img id="result-tgt" alt="Target" />
+        </div>
+      </div>
+
+      <div style="text-align:center;margin-top:var(--sp-4);">
+        <button id="btn-export" class="btn btn--secondary">
+          <svg width="14" height="14"><use href="/static/icons.svg#icon-download"/></svg>
+          Download JSON report
+        </button>
+      </div>
+    </section>
+
+    <!-- Error banner -->
+    <div id="error-banner" class="error-banner is-hidden" role="alert"></div>
+  </main>
+
+  <!-- =============================================================== -->
+  <!-- Footer                                                          -->
+  <!-- =============================================================== -->
+  <footer class="footer">
+    <div class="container footer__inner">
+      <div>
+        <strong style="color: var(--text-0);">UPIQAL</strong> · Full-Reference Image Quality &amp; Artifact Locator · 2026
+      </div>
+      <div class="footer__links">
+        <a href="/">Analyzer</a>
+        <a href="/paper">Paper</a>
+        <a href="https://github.com/katolikov/FR-IQA-Algo" target="_blank" rel="noopener">
+          <svg width="14" height="14" style="vertical-align:-2px;margin-right:4px"><use href="/static/icons.svg#icon-github"/></svg>
+          Source
+          <svg width="12" height="12" style="vertical-align:-2px"><use href="/static/icons.svg#icon-external"/></svg>
+        </a>
+      </div>
+    </div>
+  </footer>
+
+  <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>

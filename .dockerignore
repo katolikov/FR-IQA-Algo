@@ -1,0 +1,31 @@
+# Keep the Docker build context small — skip test artifacts, venv, etc.
+.git
+.gitignore
+.vercel
+.vscode
+.idea
+.DS_Store
+.claude
+venv/
+*.pyc
+__pycache__/
+.pytest_cache/
+tests/outputs/
+# UPIQAL result directories produced by CLI runs — many of these are >100MB
+upiqal_*_2026*
+upiqal_*_2025*
+upiqal_web_T*.png
+upiqal_photo_compare_*
+upiqal_results_*
+upiqal_same_image_*
+upiqal_spot_diff_*
+upiqal_img2_*
+input.png
+left.png
+right.png
+image*.png
+# Vercel-specific bits not needed by the backend container
+api/
+web/public/
+vercel.json
+.vercelignore

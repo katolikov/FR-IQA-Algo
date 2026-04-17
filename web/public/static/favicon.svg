@@ -12,11 +12,18 @@
   </defs>
 
   <g clip-path="url(#r)">
+    <!-- Tile: Weathered Timber gradient -->
     <rect width="64" height="64" fill="url(#tile)"/>
+
+    <!-- Faded Brick bottom sash — the defining accent -->
     <rect x="0" y="50" width="64" height="14" fill="#7A3731"/>
+
+    <!-- "U" glyph — warm off-white, thicker stroke -->
     <path d="M 18 16 V 36 Q 18 46 32 46 Q 46 46 46 36 V 16"
           fill="none" stroke="#ede6d9" stroke-width="7"
           stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- Artifact locator pin — Oxidized Iron circle -->
     <circle cx="50" cy="16" r="4" fill="#5E3A23" stroke="#ede6d9" stroke-width="1.5"/>
   </g>
 </svg>

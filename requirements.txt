@@ -1,7 +1,16 @@
+# Runtime dependencies for UPIQAL (CLI + FastAPI backend).
+#
+# The `upiqal` package only requires torch / torchvision. The rest of this file
+# pins the FastAPI surface. For CPU-only deployments on Fly.io / Render that
+# want to avoid pulling CUDA wheels (~2GB), see the Dockerfile: it installs
+# torch from the CPU-only wheel index.
+
 fastapi>=0.110
 uvicorn[standard]>=0.29
 python-multipart>=0.0.9
-torch>=2.0
-torchvision>=0.15
+torch>=2.2
+torchvision>=0.17
 pillow>=10.0
-numpy>=1.24
+# torch 2.x is compatible with both numpy<2 and numpy>=2 starting from 2.3.
+# Keep an upper bound to avoid accidental breakage on older torch installs.
+numpy>=1.24,<3.0

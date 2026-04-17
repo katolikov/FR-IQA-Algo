@@ -23,10 +23,13 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import os
+
 import numpy as np
 import torch
 import torch.nn.functional as F
 from fastapi import FastAPI, File, Form, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
@@ -44,10 +47,33 @@ from upiqal import UPIQAL  # noqa: E402
 
 app = FastAPI(title="UPIQAL - Image Quality Analyzer")
 
-TEMPLATES_DIR = Path(__file__).parent / "templates"
-STATIC_DIR = Path(__file__).parent / "static"
+# CORS — when the frontend is hosted elsewhere (e.g. Vercel static) and proxies
+# /api/* here, we need to accept cross-origin requests. `UPIQAL_ALLOWED_ORIGINS`
+# is a comma-separated list. Defaults to "*" for ease of local development.
+_allowed = os.environ.get("UPIQAL_ALLOWED_ORIGINS", "*")
+_allow_origins = [o.strip() for o in _allowed.split(",") if o.strip()] or ["*"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allow_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
 
-# Serve the monochrome favicon set + any future static assets.
+# Serve static & template files from `web/public/` so both the FastAPI host
+# (local dev + CPU container) and Vercel's static hosting share the same files.
+# Fall back to the legacy `web/templates/` + `web/static/` layout if present.
+PUBLIC_DIR = Path(__file__).parent / "public"
+LEGACY_TEMPLATES_DIR = Path(__file__).parent / "templates"
+LEGACY_STATIC_DIR = Path(__file__).parent / "static"
+
+if PUBLIC_DIR.exists():
+    TEMPLATES_DIR = PUBLIC_DIR
+    STATIC_DIR = PUBLIC_DIR / "static"
+else:
+    TEMPLATES_DIR = LEGACY_TEMPLATES_DIR
+    STATIC_DIR = LEGACY_STATIC_DIR
+
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Force CPU.  MPS silently OOMs inside ProbabilisticUncertaintyMapper at
@@ -512,6 +538,21 @@ def compute_diagnostics(
 async def index():
     html_path = TEMPLATES_DIR / "index.html"
     return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
+
+
+@app.get("/paper", response_class=HTMLResponse)
+async def paper():
+    """Serve the UPIQAL research paper page."""
+    html_path = TEMPLATES_DIR / "paper.html"
+    if not html_path.exists():
+        return HTMLResponse(content="paper.html not found", status_code=404)
+    return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
+
+
+@app.get("/healthz")
+async def healthz():
+    """Lightweight liveness probe for container platforms (Fly / Render)."""
+    return {"ok": True, "device": str(_device)}
 
 
 @app.post("/api/compare")
