@@ -178,9 +178,37 @@ def score_pair(
     return float(out["score"].item())
 
 
+def _apply_aggregation_weights(model: UPIQAL, ckpt_path: Path) -> None:
+    """Load the 8 MOS-tuned scalars (w_* / score_* / sigmoid_*) onto a
+    built UPIQAL instance.  In-place; no-ops silently if a key is
+    missing so old checkpoints don't crash.
+
+    Uses ``weights_only=False`` because the checkpoint file also stores
+    a small ``config`` dict that contains ``argparse`` Path objects —
+    those aren't on PyTorch's default allow-list.  We only ever load
+    checkpoints we produced ourselves, so the elevated trust level is
+    acceptable here.
+    """
+    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    params = ckpt.get("parameters", ckpt) if isinstance(ckpt, dict) else {}
+    mapping = {
+        "w_color": model, "w_anomaly": model, "w_structure": model,
+        "w_heuristic": model, "score_scale": model, "score_center": model,
+        "sigmoid_gain": model.deep_stats, "sigmoid_bias": model.deep_stats,
+    }
+    with torch.no_grad():
+        for name, owner in mapping.items():
+            if name not in params:
+                continue
+            tensor = getattr(owner, name, None)
+            if isinstance(tensor, torch.nn.Parameter):
+                tensor.copy_(torch.tensor(float(params[name])))
+
+
 def evaluate(
     pairs: List[MOSPair],
     uncertainty_weights: Optional[Path] = None,
+    aggregation_weights: Optional[Path] = None,
     max_side: int = 256,
     feature_side: int = 256,
     progress_every: int = 50,
@@ -199,6 +227,9 @@ def evaluate(
     else:
         print("[eval] identity-diagonal L (no checkpoint)")
         model = UPIQAL(pretrained_vgg=True)
+    if aggregation_weights is not None and Path(aggregation_weights).is_file():
+        print(f"[eval] applying aggregation weights: {aggregation_weights}")
+        _apply_aggregation_weights(model, Path(aggregation_weights))
     model.eval()
 
     scores: List[float] = []
@@ -286,6 +317,11 @@ def main() -> int:
         help="Path to a trained Cholesky ckpt; if omitted, identity L is used.",
     )
     parser.add_argument(
+        "--aggregation-weights", type=Path, default=None,
+        help="Path to a MOS-tuned aggregation ckpt produced by "
+             "train_aggregation.py; if omitted, hand-tuned defaults are used.",
+    )
+    parser.add_argument(
         "--max-side", type=int, default=256,
         help="Resize longer side to this many px (default 256).",
     )
@@ -311,6 +347,7 @@ def main() -> int:
     result = evaluate(
         pairs,
         uncertainty_weights=args.uncertainty_weights,
+        aggregation_weights=args.aggregation_weights,
         max_side=args.max_side,
         feature_side=args.feature_side,
     )

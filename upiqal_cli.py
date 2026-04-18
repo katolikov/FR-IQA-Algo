@@ -967,8 +967,11 @@ def run_pipeline(args: argparse.Namespace) -> None:
     sigmoid_bias_override: Optional[float] = None
     aggregation_weights_path = getattr(args, "aggregation_weights", None)
     if aggregation_weights_path:
+        # weights_only=False: the ckpt's ``config`` section contains
+        # argparse Path objects not on PyTorch's default allow-list.
+        # We only load our own files here, so elevated trust is fine.
         agg_ckpt = torch.load(
-            aggregation_weights_path, map_location="cpu", weights_only=True
+            aggregation_weights_path, map_location="cpu", weights_only=False
         )
         agg = agg_ckpt.get("parameters", agg_ckpt) if isinstance(agg_ckpt, dict) else {}
         w_color = float(agg.get("w_color", w_color))

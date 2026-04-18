@@ -267,11 +267,17 @@ def main() -> int:
     print(f"[agg] final parameters: {best_state}")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
+    # Stringify Path objects in config so weights_only=True loading works
+    # without tripping on PyTorch's default safe-globals allow-list.
+    sanitized_config = {
+        k: (str(v) if isinstance(v, Path) else v)
+        for k, v in vars(args).items()
+    }
     torch.save(
         {
             "parameters": best_state,
             "history": history,
-            "config": vars(args),
+            "config": sanitized_config,
         },
         args.out,
     )
