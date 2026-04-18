@@ -64,9 +64,12 @@ def _colour_of(rgb_pixel: np.ndarray, name: str) -> bool:
 
 def test_empty_masks_leave_target_mostly_untouched() -> None:
     tgt = _grey_target()
+    # "blocking" was removed from the user-visible artefact set; the
+    # helper silently ignores unknown keys so passing it here is
+    # harmless, but the test now uses current class names.
     out = compose_diagnostic_overlay(
         tgt,
-        {"blocking": np.zeros((H, W)), "ringing": np.zeros((H, W))},
+        {"ringing": np.zeros((H, W)), "noise": np.zeros((H, W))},
         draw_legend=False,
     )
     # Every pixel is still grey (±1 for rounding).
@@ -75,14 +78,17 @@ def test_empty_masks_leave_target_mostly_untouched() -> None:
 
 def test_single_class_tints_expected_region_in_expected_colour() -> None:
     tgt = _grey_target()
-    masks = {"blocking": np.zeros((H, W))}
-    masks["blocking"][10:30, 10:30] = 0.9  # strong blocking in top-left square
+    # "blocking" was removed from the user-visible artefact set, so we
+    # exercise one of the remaining classes — "ringing" — here.  The
+    # test still verifies the same behaviour: a strong local severity
+    # in one class tints only that region in the palette colour.
+    masks = {"ringing": np.zeros((H, W))}
+    masks["ringing"][10:30, 10:30] = 0.9  # strong ringing in top-left square
     out = compose_diagnostic_overlay(tgt, masks, draw_legend=False)
 
-    # Inside the square: pixels should lean toward the blocking colour.
     in_square = out[20, 20]
-    assert _colour_of(in_square, "blocking"), (
-        f"pixel {tuple(in_square.tolist())} not close to blocking colour"
+    assert _colour_of(in_square, "ringing"), (
+        f"pixel {tuple(in_square.tolist())} not close to ringing colour"
     )
     # Outside the square: still grey.
     out_square = out[50, 50]
@@ -91,15 +97,18 @@ def test_single_class_tints_expected_region_in_expected_colour() -> None:
 
 def test_higher_severity_wins_argmax() -> None:
     tgt = _grey_target()
+    # "blocking" was removed from the artefact set — this test now
+    # pits two still-visible classes against each other to verify the
+    # argmax-on-severity behaviour of the composite helper.
     masks = {
-        "blocking": np.full((H, W), 0.2),
-        "blur":     np.full((H, W), 0.8),  # blur is stronger everywhere
+        "ringing": np.full((H, W), 0.2),
+        "blur":    np.full((H, W), 0.8),  # blur is stronger everywhere
     }
     out = compose_diagnostic_overlay(tgt, masks, draw_legend=False)
     # Sample a pixel away from the legend corner.
     pix = out[H // 2, W // 2]
     assert _colour_of(pix, "blur"), (
-        f"blur (severity 0.8) should beat blocking (0.2); got {tuple(pix)}"
+        f"blur (severity 0.8) should beat ringing (0.2); got {tuple(pix)}"
     )
 
 

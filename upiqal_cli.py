@@ -350,9 +350,12 @@ def apply_jet_colormap(gray: np.ndarray) -> np.ndarray:
 
 # Colour per artefact class.  Chosen to be perceptually separable under
 # both protanopia and deuteranopia (tested against Coblis / Sim Daltonism).
+# Note: "blocking" was removed from user-visible artefact outputs — the
+# detector still runs internally (its severity feeds the heuristic
+# penalty in the scoring formula), but it no longer appears in the
+# composite overlay, the CLI PNG list, or the web heatmap gallery.
 #                                (R,    G,    B)  uint8
 _ARTIFACT_PALETTE: dict[str, tuple[int, int, int]] = {
-    "blocking":    (224, 75, 14),    # orange-red   — hot HF grid
     "ringing":     (224, 168, 0),    # amber        — edge proximity
     "noise":       (123, 75, 194),   # purple       — stochastic
     "color_shift": (42,  176, 196),  # cyan         — chromatic
@@ -360,7 +363,7 @@ _ARTIFACT_PALETTE: dict[str, tuple[int, int, int]] = {
 }
 
 # Display order for the composite legend (stable, independent of dict order).
-_ARTIFACT_ORDER = ("blocking", "ringing", "noise", "color_shift", "blur")
+_ARTIFACT_ORDER = ("ringing", "noise", "color_shift", "blur")
 
 
 def compose_diagnostic_overlay(
@@ -614,9 +617,12 @@ def aggregate_deep_score(
 # Diagnostics computation — shared with web/main.py:compute_diagnostics
 # ======================================================================
 
-# Severity display multipliers
+# Severity display multipliers.  "blocking" was removed from the
+# user-visible artefact set; its detector still runs and feeds the
+# heuristic-penalty term in the scoring formula, but it no longer
+# surfaces in severity_scores, the dominant_artifact label, or any
+# rendered output.  Keep this dict in sync with _ARTIFACT_LABELS.
 _SEVERITY_MULTIPLIERS = {
-    "blocking": 5.0,
     "ringing": 5.0,
     "noise": 3.0,
     "color_shift": 3.0,
@@ -624,7 +630,6 @@ _SEVERITY_MULTIPLIERS = {
 }
 
 _ARTIFACT_LABELS = {
-    "blocking": "Severe JPEG Blocking",
     "ringing": "Gibbs Ringing",
     "noise": "Noise / Granularity",
     "color_shift": "Color Shift",
@@ -721,8 +726,11 @@ def compute_diagnostics(
 
     # Display severities: scale by perceptual multipliers and clamp at 100.
     # These numbers go into the report/UI and are NOT used for argmax below.
+    # "blocking" is intentionally omitted from the user-visible severity
+    # table — the raw blocking_sev is still computed above and still
+    # contributes to the heuristic-penalty term in the score formula,
+    # but it no longer appears in reports, UI banners, or overlays.
     severity_scores = {
-        "blocking":    round(min(blocking_sev * _SEVERITY_MULTIPLIERS["blocking"], 100.0), 1),
         "ringing":     round(min(ringing_sev * _SEVERITY_MULTIPLIERS["ringing"], 100.0), 1),
         "noise":       round(min(noise_sev * _SEVERITY_MULTIPLIERS["noise"], 100.0), 1),
         "color_shift": round(min(color_sev * _SEVERITY_MULTIPLIERS["color_shift"], 100.0), 1),
@@ -747,8 +755,11 @@ def compute_diagnostics(
     # contribution to the final numerical score is small, w_heuristic=0.1).
     # Color/blur/noise are generic deep-feature signals that overlap, so
     # they're weighted closer to their pipeline weights.
+    # "blocking" deliberately excluded from the dominant-artefact race —
+    # it's no longer a user-visible class.  The detector still runs and
+    # its severity still feeds the heuristic penalty in the score, but
+    # the label never appears in diagnostics["dominant_artifact"].
     contrib = {
-        "blocking":    blocking_sev * 1.0,   # high specificity
         "ringing":     ringing_sev  * 1.0,   # high specificity
         "noise":       noise_sev    * 0.30,
         "color_shift": color_sev    * 0.30,  # raised so hue shift wins over generic VGG drift
@@ -1158,7 +1169,10 @@ def run_pipeline(args: argparse.Namespace) -> None:
         (0, "global_anomaly_map",         True),
         (1, "color_degradation_map",      True),
         (2, "structural_similarity_map",  True),
-        (3, "jpeg_blocking_mask",         False),
+        # Channel 3 (jpeg_blocking) is deliberately omitted from the PNG
+        # output list — the detector still runs (see Module 5 in the
+        # pipeline), its severity is included in the heuristic penalty,
+        # but the mask is no longer rendered as a user-visible artefact.
         (4, "gibbs_ringing_mask",         False),
         (5, "gaussian_noise_mask",        True),
         (6, "blur_mask",                  True),
@@ -1206,7 +1220,9 @@ def run_pipeline(args: argparse.Namespace) -> None:
     # dominant class in its palette colour over the target image.  One
     # glance tells the user which artefacts dominate which regions.
     composite_masks_small = {
-        "blocking":    blocking_mask[0, 0].cpu().numpy(),
+        # "blocking" intentionally omitted — no longer a user-visible
+        # artefact; its severity still contributes to the heuristic
+        # penalty in the final score but doesn't render in overlays.
         "ringing":     ringing_mask[0, 0].cpu().numpy(),
         "noise":       noise_mask[0, 0].cpu().numpy(),
         "color_shift": color_norm[0, 0].cpu().numpy(),

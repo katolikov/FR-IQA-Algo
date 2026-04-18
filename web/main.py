@@ -715,6 +715,11 @@ async def compare(
     channel_names = _CHANNEL_NAMES[: diag.shape[1]]
     heatmaps = {}
     for i, name in enumerate(channel_names):
+        # "blocking" is kept inside the diagnostic tensor (it feeds the
+        # heuristic penalty in the scoring formula) but no longer
+        # rendered as a user-visible heatmap.  Skip it here.
+        if name == "blocking":
+            continue
         use_colormap = name not in ("blocking", "ringing")
         heatmaps[name] = tensor_channel_to_base64(diag, i, colormap=use_colormap)
 
@@ -741,10 +746,10 @@ async def compare(
     from upiqal_cli import compose_diagnostic_overlay
 
     tgt_u8 = (tgt_arr * 255).astype(np.uint8)
-    # Channels 3..6 of diag are blocking/ringing/noise/blur;
-    # channel 1 is the normalised color degradation map.
+    # Channel 3 ("blocking") is deliberately excluded — it's no longer a
+    # user-visible artefact class.  Channel 4 = ringing, 5 = noise,
+    # 6 = blur; channel 1 = normalised color degradation.
     composite_masks = {
-        "blocking":    diag[0, 3].cpu().numpy(),
         "ringing":     diag[0, 4].cpu().numpy(),
         "color_shift": diag[0, 1].cpu().numpy(),
     }

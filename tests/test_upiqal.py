@@ -732,9 +732,14 @@ class TestWebEndToEnd:
         body = r.json()
         assert "score" in body and 0.0 <= body["score"] <= 1.0
         assert "heatmaps" in body
+        # "blocking" was removed from user-visible heatmaps (detector
+        # still runs and contributes to score via the heuristic
+        # penalty, but the mask is no longer emitted).  The rest of
+        # the default channels must still be present.
         assert set(body["heatmaps"].keys()) >= {
-            "anomaly", "color", "structure", "blocking", "ringing",
+            "anomaly", "color", "structure", "ringing",
         }
+        assert "blocking" not in body["heatmaps"]
 
     def test_compare_npy(self, client):
         rng = np.random.default_rng(2)

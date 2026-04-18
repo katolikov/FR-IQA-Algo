@@ -363,14 +363,17 @@ const HM_META = [
   { key: 'anomaly',   label: 'Global Anomaly' },
   { key: 'color',     label: 'Color Degradation' },
   { key: 'structure', label: 'Structural Similarity' },
-  { key: 'blocking',  label: 'JPEG Blocking' },
   { key: 'ringing',   label: 'Gibbs Ringing' },
   { key: 'noise',     label: 'Gaussian Noise' },
   { key: 'blur',      label: 'Blur / Detail Loss' },
 ];
 
+// "blocking" is no longer a user-visible artefact; the detector still
+// feeds into the heuristic-penalty term of the scoring formula, so
+// scores remain the same.  This label map intentionally omits it so
+// the diagnostics banner never advertises "JPEG Blocking" as the
+// dominant artefact.
 const SEVERITY_LABELS = {
-  blocking: 'JPEG Blocking',
   ringing: 'Gibbs Ringing',
   noise: 'Noise',
   color_shift: 'Color Shift',
