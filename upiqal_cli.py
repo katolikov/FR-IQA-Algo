@@ -344,6 +344,150 @@ def apply_jet_colormap(gray: np.ndarray) -> np.ndarray:
     return (rgb * 255).astype(np.uint8)
 
 
+# ======================================================================
+# Composite diagnostic overlay ("all artefacts on one image")
+# ======================================================================
+
+# Colour per artefact class.  Chosen to be perceptually separable under
+# both protanopia and deuteranopia (tested against Coblis / Sim Daltonism).
+#                                (R,    G,    B)  uint8
+_ARTIFACT_PALETTE: dict[str, tuple[int, int, int]] = {
+    "blocking":    (224, 75, 14),    # orange-red   — hot HF grid
+    "ringing":     (224, 168, 0),    # amber        — edge proximity
+    "noise":       (123, 75, 194),   # purple       — stochastic
+    "color_shift": (42,  176, 196),  # cyan         — chromatic
+    "blur":        (88,  114, 160),  # blue-gray    — detail loss
+}
+
+# Display order for the composite legend (stable, independent of dict order).
+_ARTIFACT_ORDER = ("blocking", "ringing", "noise", "color_shift", "blur")
+
+
+def compose_diagnostic_overlay(
+    target_rgb: np.ndarray,
+    masks: dict[str, np.ndarray],
+    threshold: float = 0.05,
+    alpha: float = 0.55,
+    draw_legend: bool = True,
+) -> np.ndarray:
+    """Blend the five artefact severity masks into a single RGB overlay.
+
+    Per-pixel argmax picks the **dominant** artefact class; the max
+    severity across classes picks the alpha weight.  Pixels whose max
+    severity is below ``threshold`` are left untouched so clean regions
+    of the target show through.
+
+    Parameters
+    ----------
+    target_rgb : np.ndarray
+        Target image, ``(H, W, 3)`` uint8.
+    masks : dict[str, np.ndarray]
+        Per-class severity maps in ``[0, 1]``; each entry is an
+        ``(H, W)`` float array.  Missing entries are treated as zero
+        (class silently skipped in the argmax).  Accepted keys match
+        ``_ARTIFACT_ORDER``; extras are ignored.
+    threshold : float
+        Pixels whose max severity is ≤ this value pass through to the
+        target unchanged (default 0.05).
+    alpha : float
+        Opacity scaling for the coloured overlay (default 0.55 — same as
+        ``anomaly_overlay.png``).
+    draw_legend : bool
+        If ``True``, paint a small legend strip in the top-left corner
+        with one colour chip and label per class.
+
+    Returns
+    -------
+    np.ndarray
+        Blended ``(H, W, 3)`` uint8 RGB image.
+    """
+    if target_rgb.ndim != 3 or target_rgb.shape[2] != 3:
+        raise ValueError(
+            f"target_rgb must be (H, W, 3); got shape {target_rgb.shape}"
+        )
+    h, w = target_rgb.shape[:2]
+
+    # Stack masks in a fixed class order.  Missing classes are padded
+    # with zeros so the argmax still works.
+    stack = np.zeros((len(_ARTIFACT_ORDER), h, w), dtype=np.float32)
+    for i, name in enumerate(_ARTIFACT_ORDER):
+        m = masks.get(name)
+        if m is None:
+            continue
+        if m.shape != (h, w):
+            # Resize with bilinear interpolation via PIL so we don't add
+            # an OpenCV dependency.
+            m = np.array(
+                Image.fromarray((np.clip(m, 0, 1) * 255).astype(np.uint8)
+                                 ).resize((w, h), Image.BILINEAR),
+                dtype=np.float32,
+            ) / 255.0
+        stack[i] = np.clip(m, 0.0, 1.0).astype(np.float32)
+
+    # Per-pixel dominant class + its severity.
+    label_map = stack.argmax(axis=0)  # (H, W) int in [0, 4]
+    sev_map = stack.max(axis=0)       # (H, W) float in [0, 1]
+
+    # Build an (H, W, 3) RGB layer using the palette of the dominant class.
+    colour_lut = np.array(
+        [_ARTIFACT_PALETTE[n] for n in _ARTIFACT_ORDER], dtype=np.float32,
+    )  # (5, 3)
+    colour_map = colour_lut[label_map]  # (H, W, 3) float in [0, 255]
+
+    # Alpha = 0 where severity < threshold, else severity * alpha.
+    active = (sev_map > threshold).astype(np.float32)
+    alpha_mask = (sev_map * alpha * active)[..., None]  # (H, W, 1)
+
+    blended = (
+        (1.0 - alpha_mask) * target_rgb.astype(np.float32)
+        + alpha_mask * colour_map
+    )
+    blended = np.clip(blended, 0, 255).astype(np.uint8)
+
+    if draw_legend:
+        _draw_legend(blended)
+    return blended
+
+
+def _draw_legend(rgb: np.ndarray) -> None:
+    """Paint a small legend in the top-left corner of ``rgb`` in place."""
+    from PIL import ImageDraw, ImageFont
+
+    img = Image.fromarray(rgb)
+    draw = ImageDraw.Draw(img, "RGBA")
+    # Try the system's default TrueType; fall back to the bitmap font.
+    try:
+        font = ImageFont.truetype("Arial.ttf", size=12)
+    except Exception:
+        font = ImageFont.load_default()
+
+    pad = 6
+    chip_w, chip_h = 12, 12
+    line_h = chip_h + 4
+    # Measure the longest label to size the background box.
+    labels = [n.replace("_", " ") for n in _ARTIFACT_ORDER]
+    # Pillow 10+ removed font.getsize; use getbbox instead.
+    label_w = max((draw.textbbox((0, 0), lbl, font=font)[2] for lbl in labels), default=60)
+    box_w = pad * 2 + chip_w + 4 + label_w
+    box_h = pad * 2 + line_h * len(_ARTIFACT_ORDER)
+    draw.rectangle([(4, 4), (4 + box_w, 4 + box_h)], fill=(0, 0, 0, 170))
+    y = 4 + pad
+    for name, lbl in zip(_ARTIFACT_ORDER, labels):
+        colour = _ARTIFACT_PALETTE[name]
+        draw.rectangle(
+            [(4 + pad, y), (4 + pad + chip_w, y + chip_h)],
+            fill=colour,
+        )
+        draw.text(
+            (4 + pad + chip_w + 4, y - 1),
+            lbl,
+            fill=(240, 240, 240, 255),
+            font=font,
+        )
+        y += line_h
+    rgb[:] = np.array(img, dtype=np.uint8)
+
+
 def save_channel(
     tensor: torch.Tensor,
     channel: int,
@@ -1018,6 +1162,28 @@ def run_pipeline(args: argparse.Namespace) -> None:
     blended = (1.0 - alpha) * target_rgb + alpha * heatmap_rgb.astype(np.float32)
     blended = np.clip(blended, 0, 255).astype(np.uint8)
     Image.fromarray(blended).save(str(out_dir / "anomaly_overlay.png"), format="PNG")
+
+    # ── Composite diagnostic overlay (per-pixel dominant artefact) ──
+    # Pulls all five artefact severity maps together and paints the
+    # dominant class in its palette colour over the target image.  One
+    # glance tells the user which artefacts dominate which regions.
+    composite_masks_small = {
+        "blocking":    blocking_mask[0, 0].cpu().numpy(),
+        "ringing":     ringing_mask[0, 0].cpu().numpy(),
+        "noise":       noise_mask[0, 0].cpu().numpy(),
+        "color_shift": color_norm[0, 0].cpu().numpy(),
+        "blur":        blur_mask[0, 0].cpu().numpy(),
+    }
+    composite = compose_diagnostic_overlay(
+        np.array(orig_img, dtype=np.uint8),
+        composite_masks_small,
+        threshold=0.05,
+        alpha=0.55,
+        draw_legend=True,
+    )
+    Image.fromarray(composite).save(
+        str(out_dir / "diagnostic_overlay.png"), format="PNG"
+    )
 
     # ── Save JSON report ────────────────────────────────────────────
     report = {

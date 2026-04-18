@@ -732,6 +732,31 @@ async def compare(
     blended_img.save(buf, format="PNG")
     overlay_b64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
+    # Composite diagnostic overlay ("all artefacts on one image") —
+    # argmax the five per-class severity channels, colour by class,
+    # blend over target.  Reuses the same helper the CLI writes to
+    # `diagnostic_overlay.png`.
+    from upiqal_cli import compose_diagnostic_overlay
+
+    tgt_u8 = (tgt_arr * 255).astype(np.uint8)
+    # Channels 3..6 of diag are blocking/ringing/noise/blur;
+    # channel 1 is the normalised color degradation map.
+    composite_masks = {
+        "blocking":    diag[0, 3].cpu().numpy(),
+        "ringing":     diag[0, 4].cpu().numpy(),
+        "color_shift": diag[0, 1].cpu().numpy(),
+    }
+    if diag.shape[1] >= 6:
+        composite_masks["noise"] = diag[0, 5].cpu().numpy()
+    if diag.shape[1] >= 7:
+        composite_masks["blur"] = diag[0, 6].cpu().numpy()
+    composite_rgb = compose_diagnostic_overlay(
+        tgt_u8, composite_masks, threshold=0.05, alpha=0.55, draw_legend=True,
+    )
+    buf2 = io.BytesIO()
+    Image.fromarray(composite_rgb).save(buf2, format="PNG")
+    heatmaps["composite"] = base64.b64encode(buf2.getvalue()).decode("ascii")
+
     # Target image as base64 (for opacity slider overlay in the frontend)
     target_b64 = tensor_to_base64(tgt_tensor)
 

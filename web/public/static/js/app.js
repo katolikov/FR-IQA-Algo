@@ -359,11 +359,14 @@ btnRun.addEventListener('click', async () => {
 // -----------------------------------------------------------------------------
 const HM_META = [
   { key: 'overlay',   label: 'Anomaly Overlay',       isOverlay: true },
+  { key: 'composite', label: 'All Artefacts (composite)' },
   { key: 'anomaly',   label: 'Global Anomaly' },
   { key: 'color',     label: 'Color Degradation' },
   { key: 'structure', label: 'Structural Similarity' },
   { key: 'blocking',  label: 'JPEG Blocking' },
   { key: 'ringing',   label: 'Gibbs Ringing' },
+  { key: 'noise',     label: 'Gaussian Noise' },
+  { key: 'blur',      label: 'Blur / Detail Loss' },
 ];
 
 const SEVERITY_LABELS = {
