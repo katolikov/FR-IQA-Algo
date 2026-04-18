@@ -33,7 +33,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import numpy as np
 import torch
@@ -955,13 +955,48 @@ def run_pipeline(args: argparse.Namespace) -> None:
         print("  Uncertainty weights: identity diagonal (untrained)")
     heuristics = SpatialHeuristicsEngine()
 
-    # Aggregation weights (defaults from upiqal/model.py)
+    # Aggregation weights (defaults from upiqal/model.py).  Optionally
+    # overridden by a MOS-tuned ckpt produced by train_aggregation.py.
     w_color = 0.1
     w_anomaly = 0.3
     w_structure = 0.5
     w_heuristic = 0.1
     score_scale = 10.0
     score_center = 0.2
+    sigmoid_gain_override: Optional[float] = None
+    sigmoid_bias_override: Optional[float] = None
+    aggregation_weights_path = getattr(args, "aggregation_weights", None)
+    if aggregation_weights_path:
+        agg_ckpt = torch.load(
+            aggregation_weights_path, map_location="cpu", weights_only=True
+        )
+        agg = agg_ckpt.get("parameters", agg_ckpt) if isinstance(agg_ckpt, dict) else {}
+        w_color = float(agg.get("w_color", w_color))
+        w_anomaly = float(agg.get("w_anomaly", w_anomaly))
+        w_structure = float(agg.get("w_structure", w_structure))
+        w_heuristic = float(agg.get("w_heuristic", w_heuristic))
+        score_scale = float(agg.get("score_scale", score_scale))
+        score_center = float(agg.get("score_center", score_center))
+        if "sigmoid_gain" in agg:
+            sigmoid_gain_override = float(agg["sigmoid_gain"])
+        if "sigmoid_bias" in agg:
+            sigmoid_bias_override = float(agg["sigmoid_bias"])
+        print(
+            f"  Aggregation weights: {aggregation_weights_path} (MOS-tuned)"
+        )
+    else:
+        print("  Aggregation weights: hand-tuned defaults")
+
+    # Apply optional A-DISTS sigmoid overrides to the already-built
+    # deep_stats module.
+    if sigmoid_gain_override is not None and hasattr(deep_stats, "sigmoid_gain"):
+        with torch.no_grad():
+            if isinstance(deep_stats.sigmoid_gain, torch.nn.Parameter):
+                deep_stats.sigmoid_gain.copy_(torch.tensor(sigmoid_gain_override))
+    if sigmoid_bias_override is not None and hasattr(deep_stats, "sigmoid_bias"):
+        with torch.no_grad():
+            if isinstance(deep_stats.sigmoid_bias, torch.nn.Parameter):
+                deep_stats.sigmoid_bias.copy_(torch.tensor(sigmoid_bias_override))
 
     # ── Create output directory (deferred until modules are ready) ──
     if args.output_dir:
@@ -1303,6 +1338,16 @@ def parse_args() -> argparse.Namespace:
             "Path to a trained Cholesky checkpoint for Module 4 "
             "(produced by train_uncertainty.py). If omitted, the "
             "identity-diagonal baseline is used."
+        ),
+    )
+    parser.add_argument(
+        "--aggregation-weights",
+        dest="aggregation_weights",
+        default=None,
+        help=(
+            "Path to a MOS-tuned aggregation checkpoint produced by "
+            "train_aggregation.py (8 scalars: the six pipeline weights "
+            "plus A-DISTS sigmoid k/b). Overrides the hand-tuned defaults."
         ),
     )
 

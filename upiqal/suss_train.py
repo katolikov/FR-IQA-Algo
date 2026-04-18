@@ -200,6 +200,56 @@ def _pil_to_array(pil):  # small indirection so tests can stub PIL
 # --------------------------------------------------------------------------
 # Loss
 # --------------------------------------------------------------------------
+def ranking_loss(
+    pred: torch.Tensor,
+    mos: torch.Tensor,
+    weight_plcc: float = 0.5,
+    weight_rank: float = 0.5,
+    eps: float = 1e-8,
+) -> torch.Tensor:
+    """Differentiable ranking loss for MOS-correlation tuning.
+
+    Combines two standard IQA surrogates:
+
+    * ``1 - PLCC``: linear Pearson correlation between centered
+      predictions and MOS.  Pushes the predictor into linear alignment
+      with MOS.
+    * Margin ranking: for every pair (i, j) with distinct MOS, penalise
+      the case where the predictor's ordering disagrees with MOS via
+      ``relu(-(mos_i - mos_j) * (pred_i - pred_j))``.  This is a
+      differentiable proxy for SROCC — zero when every pair is ordered
+      correctly.
+
+    The convex combination yields a stable loss surface whose minimum
+    coincides with perfect SROCC and perfect PLCC simultaneously.
+
+    ``pred`` and ``mos`` must already point the same way (higher pred
+    ⇔ higher mos).  Flip the sign of whichever side is needed before
+    calling (UPIQAL score is "higher better", KADID DMOS is
+    "higher worse").
+    """
+    if pred.shape != mos.shape or pred.ndim != 1:
+        raise ValueError(
+            f"pred and mos must both be 1D of equal length; "
+            f"got {pred.shape} vs {mos.shape}"
+        )
+    if pred.shape[0] < 2:
+        return torch.zeros((), device=pred.device, dtype=pred.dtype)
+
+    pred_c = pred - pred.mean()
+    mos_c = mos - mos.mean()
+    num = (pred_c * mos_c).sum()
+    den = torch.sqrt((pred_c ** 2).sum() * (mos_c ** 2).sum() + eps)
+    plcc = num / den
+    loss_plcc = 1.0 - plcc
+
+    pred_diff = pred.unsqueeze(0) - pred.unsqueeze(1)
+    mos_diff = mos.unsqueeze(0) - mos.unsqueeze(1)
+    loss_rank = torch.relu(-mos_diff * pred_diff).mean()
+
+    return weight_plcc * loss_plcc + weight_rank * loss_rank
+
+
 def compute_nll_loss(
     m2_map: torch.Tensor,
     sum_log_diag: torch.Tensor,
