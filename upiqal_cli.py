@@ -363,7 +363,11 @@ _ARTIFACT_PALETTE: dict[str, tuple[int, int, int]] = {
     "noise":       (123, 75, 194),   # purple       — stochastic
     "color_shift": (42,  176, 196),  # cyan         — chromatic
     "blur":        (88,  114, 160),  # blue-gray    — detail loss
-    "anomaly":     (200, 80,  140),  # magenta      — generic anomaly
+    "anomaly":     (60,  200, 90),   # bright green — generic anomaly
+    #            Green is the only hue NOT already used by a specific
+    #            class and is maximally distinct from noise-purple
+    #            (user couldn't tell magenta/purple apart in the live
+    #            composite — this swap fixes that).
 }
 
 # Display order for the composite legend (stable, independent of dict
@@ -1225,11 +1229,13 @@ def run_pipeline(args: argparse.Namespace) -> None:
     # Pulls all five artefact severity maps together and paints the
     # dominant class in its palette colour over the target image.  One
     # glance tells the user which artefacts dominate which regions.
-    # Global anomaly map as a fallback channel: we attenuate it by 0.6
-    # so specific-class severities above ~0.6 always win the per-pixel
-    # argmax.  This keeps "anomaly" (magenta) as a meaningful catch-all
-    # for generic deviations while preserving specific diagnoses.
-    _anomaly_fallback = (anomaly_norm[0, 0].cpu().numpy() * 0.6).clip(0, 1)
+    # Global anomaly map as a fallback channel.  Attenuated by 0.75 so
+    # specific-class severities above ~0.75 still win the per-pixel
+    # argmax, but anomaly can still break through in regions where all
+    # specific classes are quiet.  Previous attenuation (0.6) made the
+    # anomaly class nearly invisible — user complaint "I don't see
+    # anomaly in composite" — this raises its prominence.
+    _anomaly_fallback = (anomaly_norm[0, 0].cpu().numpy() * 0.75).clip(0, 1)
     composite_masks_small = {
         # "blocking" intentionally omitted — no longer a user-visible
         # artefact; its severity still contributes to the heuristic
