@@ -170,9 +170,11 @@ def score_pair(
             tgt, size=new_hw, mode="bicubic",
             align_corners=False, antialias=True,
         ).clamp(0, 1)
-        out = model(ref_small, tgt_small, ref_full=ref, tgt_full=tgt)
+        with torch.no_grad():
+            out = model(ref_small, tgt_small, ref_full=ref, tgt_full=tgt)
     else:
-        out = model(ref, tgt)
+        with torch.no_grad():
+            out = model(ref, tgt)
     return float(out["score"].item())
 
 

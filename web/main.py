@@ -679,14 +679,16 @@ async def compare(
             tgt_full_on_device, size=new_hw,
             mode="bicubic", align_corners=False, antialias=True,
         ).clamp(0.0, 1.0)
-        result = model(
-            ref_on_device, tgt_on_device,
-            ref_full=ref_full_on_device, tgt_full=tgt_full_on_device,
-        )
+        with torch.no_grad():
+            result = model(
+                ref_on_device, tgt_on_device,
+                ref_full=ref_full_on_device, tgt_full=tgt_full_on_device,
+            )
     else:
         ref_on_device = ref_full_on_device
         tgt_on_device = tgt_full_on_device
-        result = model(ref_on_device, tgt_on_device)
+        with torch.no_grad():
+            result = model(ref_on_device, tgt_on_device)
 
     score = float(result["score"][0].item())
     diag = result["diagnostic_tensor"]  # (1, 5, H, W)

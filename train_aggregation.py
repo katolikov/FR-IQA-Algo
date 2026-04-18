@@ -67,23 +67,30 @@ def _match_shapes(ref: torch.Tensor, tgt: torch.Tensor) -> tuple[torch.Tensor, t
 
 
 def _score_batch(
-    model: UPIQAL, batch: List[MOSPair], max_side: int
+    model: UPIQAL,
+    batch: List[MOSPair],
+    max_side: int,
+    requires_grad: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Return ``(pred_scores, mos)`` both shape ``(len(batch),)``.
 
-    Unlike inference we do **not** run in ``no_grad`` because we need
-    gradients through the aggregation parameters.  VGG16 weights remain
-    frozen via ``requires_grad_(False)`` set during model init.
+    ``UPIQAL.forward`` is decorated ``@torch.no_grad()`` for inference,
+    so we override it via ``torch.enable_grad()`` when training.  VGG16
+    parameters stay frozen regardless — their ``requires_grad=False``
+    flags prevent them from collecting gradients even inside an
+    enable_grad context.
     """
     preds = []
     targets = []
-    for p in batch:
-        ref = load_image_as_tensor(str(p.ref_path), max_side=max_side)
-        tgt = load_image_as_tensor(str(p.dist_path), max_side=max_side)
-        ref, tgt = _match_shapes(ref, tgt)
-        out = model(ref, tgt)
-        preds.append(out["score"])
-        targets.append(torch.tensor([p.mos], dtype=torch.float32))
+    ctx = torch.enable_grad() if requires_grad else torch.no_grad()
+    with ctx:
+        for p in batch:
+            ref = load_image_as_tensor(str(p.ref_path), max_side=max_side)
+            tgt = load_image_as_tensor(str(p.dist_path), max_side=max_side)
+            ref, tgt = _match_shapes(ref, tgt)
+            out = model(ref, tgt)
+            preds.append(out["score"])
+            targets.append(torch.tensor([p.mos], dtype=torch.float32))
     return torch.cat(preds), torch.cat(targets)
 
 
@@ -222,10 +229,10 @@ def main() -> int:
 
         # ---- validation ----
         model.eval()
+        val_pred, val_mos = _score_batch(
+            model, val_all, args.max_side, requires_grad=False,
+        )
         with torch.no_grad():
-            val_pred, val_mos = _score_batch(
-                model, val_all, args.max_side,
-            )
             val_loss = float(ranking_loss(-val_pred, val_mos).item())
         elapsed = time.perf_counter() - t0
 

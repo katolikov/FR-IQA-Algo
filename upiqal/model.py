@@ -217,7 +217,6 @@ class UPIQAL(nn.Module):
     # Forward
     # ------------------------------------------------------------------
 
-    @torch.no_grad()
     def forward(
         self,
         ref: torch.Tensor,
