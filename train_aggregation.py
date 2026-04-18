@@ -146,6 +146,15 @@ def main() -> int:
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--lr", type=float, default=5e-3)
+    parser.add_argument(
+        "--reg-toward-defaults", type=float, default=0.0,
+        help="L2 penalty coefficient that pulls every trained parameter "
+             "back toward its hand-tuned default.  0 disables; 0.01-0.1 "
+             "is a reasonable range (larger = more conservative).  This "
+             "is the actual fix for overfitting when the train set is "
+             "small; combined with lower lr, it prevents the 8 scalars "
+             "from drifting into an overfit basin.",
+    )
     parser.add_argument("--max-side", type=int, default=256)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
@@ -197,7 +206,14 @@ def main() -> int:
     print(f"[agg] training {len(trainable)} parameters, {n_params} scalars total")
     print(f"[agg] initial values: {_param_snapshot(trainable)}")
 
+    # Snapshot the hand-tuned defaults BEFORE Adam touches them, so the
+    # regulariser can pull each parameter back toward its original value.
+    default_values = [p.detach().clone() for p in trainable]
+
     optim = torch.optim.Adam(trainable, lr=args.lr)
+    reg_coeff = float(args.reg_toward_defaults)
+    if reg_coeff > 0:
+        print(f"[agg] regularising toward defaults with coeff={reg_coeff}")
 
     # ---- training loop -----------------------------------------------
     history: list[dict[str, float]] = []
@@ -221,6 +237,12 @@ def main() -> int:
             # Flip UPIQAL score: DMOS is "higher worse", our score is
             # "higher better".  Ranking loss wants both aligned.
             loss = ranking_loss(-pred, mos)
+            if reg_coeff > 0:
+                reg = sum(
+                    ((p - d) ** 2).sum()
+                    for p, d in zip(trainable, default_values)
+                )
+                loss = loss + reg_coeff * reg
             optim.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(trainable, 1.0)
