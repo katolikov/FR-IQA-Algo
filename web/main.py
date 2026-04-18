@@ -417,9 +417,12 @@ def tensor_to_base64(tensor: torch.Tensor) -> str:
 # Diagnostics computation
 # ---------------------------------------------------------------------------
 
-# Severity display multipliers (matching the original diagnostics output)
+# Severity display multipliers (matching the original diagnostics output).
+# "blocking" was removed from the user-visible artefact set; the detector
+# still runs and feeds the heuristic penalty in the score but no longer
+# surfaces in severity_scores / dominant_artifact / heatmaps.  Keep this
+# dict aligned with upiqal_cli.py::_SEVERITY_MULTIPLIERS.
 _SEVERITY_MULTIPLIERS = {
-    "blocking": 5.0,
     "ringing": 5.0,
     "noise": 3.0,
     "color_shift": 3.0,
@@ -427,7 +430,6 @@ _SEVERITY_MULTIPLIERS = {
 }
 
 _ARTIFACT_LABELS = {
-    "blocking": "Severe JPEG Blocking",
     "ringing": "Gibbs Ringing",
     "noise": "Noise / Granularity",
     "color_shift": "Color Shift",
@@ -508,8 +510,11 @@ def compute_diagnostics(
     else:
         blur_sev = float((1.0 - structure).mean().item()) * 100
 
+    # "blocking" intentionally omitted from the user-visible severity
+    # table — blocking_sev is still computed above for the heuristic
+    # penalty feed but no longer surfaces in reports, UI banners, or
+    # the dominant-artifact race.
     severity_scores = {
-        "blocking":    round(min(blocking_sev * _SEVERITY_MULTIPLIERS["blocking"], 100.0), 1),
         "ringing":     round(min(ringing_sev  * _SEVERITY_MULTIPLIERS["ringing"],  100.0), 1),
         "noise":       round(min(noise_sev    * _SEVERITY_MULTIPLIERS["noise"],    100.0), 1),
         "color_shift": round(min(color_sev    * _SEVERITY_MULTIPLIERS["color_shift"], 100.0), 1),
@@ -517,9 +522,9 @@ def compute_diagnostics(
     }
 
     # Contribution weights — high for specificity-rich heuristic masks,
-    # moderate for deep-feature signals. Matches upiqal_cli.py.
+    # moderate for deep-feature signals.  Matches upiqal_cli.py; "blocking"
+    # excluded so it can never be named as the dominant artefact.
     contrib = {
-        "blocking":    blocking_sev * 1.0,
         "ringing":     ringing_sev  * 1.0,
         "noise":       noise_sev    * 0.30,
         "color_shift": color_sev    * 0.30,
