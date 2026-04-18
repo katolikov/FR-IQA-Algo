@@ -748,10 +748,14 @@ async def compare(
     tgt_u8 = (tgt_arr * 255).astype(np.uint8)
     # Channel 3 ("blocking") is deliberately excluded — it's no longer a
     # user-visible artefact class.  Channel 4 = ringing, 5 = noise,
-    # 6 = blur; channel 1 = normalised color degradation.
+    # 6 = blur; channel 1 = normalised color degradation; channel 0 =
+    # global anomaly map (Mahalanobis).  The anomaly map is attenuated
+    # by 0.6 so it acts as a catch-all fallback without out-voting
+    # specific-class severities above ~0.6.
     composite_masks = {
         "ringing":     diag[0, 4].cpu().numpy(),
         "color_shift": diag[0, 1].cpu().numpy(),
+        "anomaly":     (diag[0, 0].cpu().numpy() * 0.6).clip(0, 1),
     }
     if diag.shape[1] >= 6:
         composite_masks["noise"] = diag[0, 5].cpu().numpy()

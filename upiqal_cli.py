@@ -354,16 +354,22 @@ def apply_jet_colormap(gray: np.ndarray) -> np.ndarray:
 # detector still runs internally (its severity feeds the heuristic
 # penalty in the scoring formula), but it no longer appears in the
 # composite overlay, the CLI PNG list, or the web heatmap gallery.
+# "anomaly" is the generic catch-all for pixels where the probabilistic
+# uncertainty mapper flags a deviation but no specific class dominates.
+# It should only win when all four specific classes are quiet.
 #                                (R,    G,    B)  uint8
 _ARTIFACT_PALETTE: dict[str, tuple[int, int, int]] = {
     "ringing":     (224, 168, 0),    # amber        — edge proximity
     "noise":       (123, 75, 194),   # purple       — stochastic
     "color_shift": (42,  176, 196),  # cyan         — chromatic
     "blur":        (88,  114, 160),  # blue-gray    — detail loss
+    "anomaly":     (200, 80,  140),  # magenta      — generic anomaly
 }
 
-# Display order for the composite legend (stable, independent of dict order).
-_ARTIFACT_ORDER = ("ringing", "noise", "color_shift", "blur")
+# Display order for the composite legend (stable, independent of dict
+# order).  "anomaly" is last so that on ties a specific class wins —
+# anomaly is a fallback signal, not a primary diagnosis.
+_ARTIFACT_ORDER = ("ringing", "noise", "color_shift", "blur", "anomaly")
 
 
 def compose_diagnostic_overlay(
@@ -1219,6 +1225,11 @@ def run_pipeline(args: argparse.Namespace) -> None:
     # Pulls all five artefact severity maps together and paints the
     # dominant class in its palette colour over the target image.  One
     # glance tells the user which artefacts dominate which regions.
+    # Global anomaly map as a fallback channel: we attenuate it by 0.6
+    # so specific-class severities above ~0.6 always win the per-pixel
+    # argmax.  This keeps "anomaly" (magenta) as a meaningful catch-all
+    # for generic deviations while preserving specific diagnoses.
+    _anomaly_fallback = (anomaly_norm[0, 0].cpu().numpy() * 0.6).clip(0, 1)
     composite_masks_small = {
         # "blocking" intentionally omitted — no longer a user-visible
         # artefact; its severity still contributes to the heuristic
@@ -1227,6 +1238,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
         "noise":       noise_mask[0, 0].cpu().numpy(),
         "color_shift": color_norm[0, 0].cpu().numpy(),
         "blur":        blur_mask[0, 0].cpu().numpy(),
+        "anomaly":     _anomaly_fallback,
     }
     composite = compose_diagnostic_overlay(
         np.array(orig_img, dtype=np.uint8),
