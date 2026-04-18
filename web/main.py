@@ -760,11 +760,11 @@ async def compare(
     composite_masks = {
         "ringing":     diag[0, 4].cpu().numpy(),
         "color_shift": diag[0, 1].cpu().numpy(),
-        # 0.75 attenuation: anomaly loses the argmax only when a
-        # specific class exceeds 0.75, so the magenta-now-green
-        # anomaly class stays visible on moderately-deviant pixels
-        # that aren't strongly classified.
-        "anomaly":     (diag[0, 0].cpu().numpy() * 0.75).clip(0, 1),
+        # Anomaly is the PRIMARY layer in the composite.  Attenuation
+        # 0.9 plus anomaly-first ordering in _ARTIFACT_ORDER makes it
+        # win every tie and near-tie against specific classes — user
+        # preference: "anomaly should be above — like main artefacts".
+        "anomaly":     (diag[0, 0].cpu().numpy() * 0.9).clip(0, 1),
     }
     if diag.shape[1] >= 6:
         composite_masks["noise"] = diag[0, 5].cpu().numpy()

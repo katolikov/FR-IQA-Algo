@@ -355,25 +355,26 @@ def apply_jet_colormap(gray: np.ndarray) -> np.ndarray:
 # penalty in the scoring formula), but it no longer appears in the
 # composite overlay, the CLI PNG list, or the web heatmap gallery.
 # "anomaly" is the generic catch-all for pixels where the probabilistic
-# uncertainty mapper flags a deviation but no specific class dominates.
-# It should only win when all four specific classes are quiet.
+# uncertainty mapper flags a deviation.  It's placed FIRST in the
+# palette + argmax order so that whenever anomaly severity ties or
+# equals a specific class's severity, anomaly wins the pixel — the
+# user's preferred behaviour is to treat anomaly as the primary /
+# "main" artefact layer, with specific classes only taking over when
+# they are strictly stronger than the attenuated anomaly channel.
 #                                (R,    G,    B)  uint8
 _ARTIFACT_PALETTE: dict[str, tuple[int, int, int]] = {
+    "anomaly":     (60,  200, 90),   # bright green — generic anomaly (primary layer)
     "ringing":     (224, 168, 0),    # amber        — edge proximity
     "noise":       (123, 75, 194),   # purple       — stochastic
     "color_shift": (42,  176, 196),  # cyan         — chromatic
     "blur":        (88,  114, 160),  # blue-gray    — detail loss
-    "anomaly":     (60,  200, 90),   # bright green — generic anomaly
-    #            Green is the only hue NOT already used by a specific
-    #            class and is maximally distinct from noise-purple
-    #            (user couldn't tell magenta/purple apart in the live
-    #            composite — this swap fixes that).
 }
 
 # Display order for the composite legend (stable, independent of dict
-# order).  "anomaly" is last so that on ties a specific class wins —
-# anomaly is a fallback signal, not a primary diagnosis.
-_ARTIFACT_ORDER = ("ringing", "noise", "color_shift", "blur", "anomaly")
+# order).  "anomaly" is FIRST so np.argmax returns it on ties — ties
+# and close-calls between anomaly and a specific class both resolve to
+# anomaly, matching the user preference "anomaly should be above".
+_ARTIFACT_ORDER = ("anomaly", "ringing", "noise", "color_shift", "blur")
 
 
 def compose_diagnostic_overlay(
@@ -1229,13 +1230,13 @@ def run_pipeline(args: argparse.Namespace) -> None:
     # Pulls all five artefact severity maps together and paints the
     # dominant class in its palette colour over the target image.  One
     # glance tells the user which artefacts dominate which regions.
-    # Global anomaly map as a fallback channel.  Attenuated by 0.75 so
-    # specific-class severities above ~0.75 still win the per-pixel
-    # argmax, but anomaly can still break through in regions where all
-    # specific classes are quiet.  Previous attenuation (0.6) made the
-    # anomaly class nearly invisible — user complaint "I don't see
-    # anomaly in composite" — this raises its prominence.
-    _anomaly_fallback = (anomaly_norm[0, 0].cpu().numpy() * 0.75).clip(0, 1)
+    # Global anomaly map as the PRIMARY channel.  Attenuated by 0.9 so
+    # specific-class severities strictly above ~0.9 still win, but
+    # every tie and near-tie (anomaly and specific class both at ~1.0)
+    # resolves to anomaly — matching the user preference to treat
+    # anomaly as the main layer.  Evolution: 0.6 (too invisible) →
+    # 0.75 (visible but loses to specific classes) → 0.9 (wins ties).
+    _anomaly_fallback = (anomaly_norm[0, 0].cpu().numpy() * 0.9).clip(0, 1)
     composite_masks_small = {
         # "blocking" intentionally omitted — no longer a user-visible
         # artefact; its severity still contributes to the heuristic
