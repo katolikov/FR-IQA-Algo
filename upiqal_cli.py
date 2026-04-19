@@ -364,6 +364,7 @@ def apply_jet_colormap(gray: np.ndarray) -> np.ndarray:
 #                                (R,    G,    B)  uint8
 _ARTIFACT_PALETTE: dict[str, tuple[int, int, int]] = {
     "anomaly":     (60,  200, 90),   # bright green — generic anomaly (primary layer)
+    "structure":   (232, 78,  132),  # magenta      — structural / texture divergence
     "ringing":     (224, 168, 0),    # amber        — edge proximity
     "noise":       (123, 75, 194),   # purple       — stochastic
     "color_shift": (42,  176, 196),  # cyan         — chromatic
@@ -374,7 +375,7 @@ _ARTIFACT_PALETTE: dict[str, tuple[int, int, int]] = {
 # order).  "anomaly" is FIRST so np.argmax returns it on ties — ties
 # and close-calls between anomaly and a specific class both resolve to
 # anomaly, matching the user preference "anomaly should be above".
-_ARTIFACT_ORDER = ("anomaly", "ringing", "noise", "color_shift", "blur")
+_ARTIFACT_ORDER = ("anomaly", "structure", "ringing", "noise", "color_shift", "blur")
 
 
 def compose_diagnostic_overlay(
@@ -1253,10 +1254,17 @@ def run_pipeline(args: argparse.Namespace) -> None:
     # anomaly as the main layer.  Evolution: 0.6 (too invisible) →
     # 0.75 (visible but loses to specific classes) → 0.9 (wins ties).
     _anomaly_fallback = (anomaly_norm[0, 0].cpu().numpy() * 0.9).clip(0, 1)
+    # Structural similarity has opposite polarity to everything else:
+    # HIGH deep_sim = MORE similar = LESS damage. Invert so the "hot =
+    # damaged" contract the composite expects is preserved and damaged-
+    # structure regions actually paint their legend colour instead of
+    # the intact-structure regions falsely lighting up.
+    _structure_damage = (1.0 - deep_sim[0, 0].cpu().numpy()).clip(0, 1)
     composite_masks_small = {
         # "blocking" intentionally omitted — no longer a user-visible
         # artefact; its severity still contributes to the heuristic
         # penalty in the final score but doesn't render in overlays.
+        "structure":   _structure_damage,
         "ringing":     ringing_mask[0, 0].cpu().numpy(),
         "noise":       noise_mask[0, 0].cpu().numpy(),
         "color_shift": color_norm[0, 0].cpu().numpy(),
