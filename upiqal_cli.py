@@ -1255,29 +1255,23 @@ def run_pipeline(args: argparse.Namespace) -> None:
     # 0.75 (visible but loses to specific classes) → 0.9 (wins ties).
     _anomaly_fallback = (anomaly_norm[0, 0].cpu().numpy() * 0.9).clip(0, 1)
     # Structural similarity has opposite polarity to everything else:
-    # HIGH deep_sim = MORE similar = LESS damage. Match the saved
-    # Structure heatmap EXACTLY — the composite's magenta pixels must
-    # coincide with the red hot spots on the Structure sub-tab, and
-    # never land on blue/cyan/green regions.
+    # HIGH deep_sim = MORE similar = LESS damage. Produce the composite
+    # channel the SAME way as `_anomaly_fallback` — feed the composite
+    # the exact per-pixel intensity that the Structure sub-tab already
+    # shows (red hot = damaged, blue cool = intact), scaled by 0.9.
     #
-    # 1. Min-max normalize deep_sim → [0, 1]  (same as save_channel)
-    # 2. Invert                      → HIGH = damaged (red-hot in PNG)
-    # 3. Subtract 95th-percentile floor → only the top ~5% of pixels
-    #    (the actual red hot spots) have nonzero residual.
-    # 4. DO NOT rescale to [0, 1]. Dividing by peak amplified low-magnitude
-    #    noise above the composite's 0.05 threshold and ended up painting
-    #    magenta on intact regions. Keeping raw residuals means only
-    #    genuinely high-magnitude outliers survive — empirically 100% of
-    #    surviving pixels land on the red hot spots (vs 48% before).
+    # The saved Structure PNG is `save_channel(..., invert=True)`, i.e.
+    # `1 - min_max_normalize(deep_sim)`. Replicating that here means the
+    # composite sees the identical pre-colormap intensity the user sees
+    # in the Structure heatmap — no extra thresholding, no rescaling,
+    # just the Structure heatmap's own intensities driving the paint.
     _ds = deep_sim[0, 0].cpu().numpy()
     _lo, _hi = float(_ds.min()), float(_ds.max())
     if _hi - _lo > 1e-8:
         _norm = (_ds - _lo) / (_hi - _lo)
     else:
         _norm = np.zeros_like(_ds)
-    _inverted = 1.0 - _norm
-    _floor = float(np.percentile(_inverted, 95))
-    _structure_damage = np.clip(_inverted - _floor, 0.0, 1.0)
+    _structure_damage = (1.0 - _norm) * 0.9
     composite_masks_small = {
         # "blocking" intentionally omitted — no longer a user-visible
         # artefact; its severity still contributes to the heuristic
