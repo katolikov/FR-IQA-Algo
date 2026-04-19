@@ -508,6 +508,7 @@ def save_channel(
     filepath: str,
     use_colormap: bool = True,
     output_format: str = "png",
+    invert: bool = False,
 ) -> None:
     """Extract one channel from a diagnostic tensor and save in the chosen format.
 
@@ -516,6 +517,13 @@ def save_channel(
     - ``npy``  — Raw float32 NumPy array (normalized [0, 1]).
     - ``raw`` / ``bin`` — Flat float32 binary dump.
     - ``nv21`` — NV21 (YUV420SP) binary from the grayscale channel.
+
+    *invert* flips the polarity after min-max normalisation. Use this
+    for channels whose semantic is reversed relative to the "hot =
+    damaged" convention the jet colormap implies — e.g. the structural
+    similarity map, where HIGH values mean MORE SIMILAR (= less damage).
+    Without inversion, intact-structure regions paint bright orange and
+    look like anomalies; with inversion, damaged regions paint hot.
     """
     arr = tensor[0, channel].cpu().numpy()
 
@@ -525,6 +533,9 @@ def save_channel(
         arr = (arr - lo) / (hi - lo)
     else:
         arr = np.zeros_like(arr)
+
+    if invert:
+        arr = 1.0 - arr
 
     fmt = output_format.lower()
 
@@ -1176,24 +1187,29 @@ def run_pipeline(args: argparse.Namespace) -> None:
     ext = out_fmt if out_fmt not in ("raw", "bin") else out_fmt
     ext_dot = f".{ext}"
 
+    # (channel_idx, filename_stem, use_colormap, invert_polarity).
+    # invert=True flips the [0,1] array before colormapping. Required
+    # for the structural similarity map because its native semantic is
+    # "higher = more similar", opposite of every other damage mask.
     channel_info = [
-        (0, "global_anomaly_map",         True),
-        (1, "color_degradation_map",      True),
-        (2, "structural_similarity_map",  True),
+        (0, "global_anomaly_map",         True,  False),
+        (1, "color_degradation_map",      True,  False),
+        (2, "structural_similarity_map",  True,  True),
         # Channel 3 (jpeg_blocking) is deliberately omitted from the PNG
         # output list — the detector still runs (see Module 5 in the
         # pipeline), its severity is included in the heuristic penalty,
         # but the mask is no longer rendered as a user-visible artefact.
-        (4, "gibbs_ringing_mask",         False),
-        (5, "gaussian_noise_mask",        True),
-        (6, "blur_mask",                  True),
+        (4, "gibbs_ringing_mask",         False, False),
+        (5, "gaussian_noise_mask",        True,  False),
+        (6, "blur_mask",                  True,  False),
     ]
-    for ch_idx, name, use_cmap in channel_info:
+    for ch_idx, name, use_cmap, invert in channel_info:
         save_channel(
             diagnostic, ch_idx,
             str(out_dir / f"{name}{ext_dot}"),
             use_colormap=use_cmap,
             output_format=out_fmt,
+            invert=invert,
         )
 
     # ── Generate anomaly overlay at original resolution ─────────────
