@@ -1255,20 +1255,19 @@ def run_pipeline(args: argparse.Namespace) -> None:
     # 0.75 (visible but loses to specific classes) → 0.9 (wins ties).
     _anomaly_fallback = (anomaly_norm[0, 0].cpu().numpy() * 0.9).clip(0, 1)
     # Structural similarity has opposite polarity to everything else:
-    # HIGH deep_sim = MORE similar = LESS damage. The composite's
-    # magenta paint must land on the RED/WARM pixels of the Structure
-    # sub-tab only — not the blue/cyan intact regions.
+    # HIGH deep_sim = MORE similar = LESS damage. Magenta paint must
+    # land on the RED/WARM pixels of the Structure sub-tab only.
     #
-    # Unlike `anomaly_norm` (which is inherently sparse — only real
-    # anomalies are nonzero), `1 - normalize(deep_sim)` is dense: every
-    # pixel has some residual dissimilarity spanning blue→cyan→yellow→red
-    # in the jet colormap. Feeding it directly would paint magenta on
-    # cyan/blue regions too.
-    #
-    # Solution: keep only the warm tail (95th-percentile floor, no
-    # rescale). Empirically 99%+ of surviving pixels land on the red
-    # hot spots of the Structure heatmap, matching the user's
-    # expectation that only warm pixels drive the composite.
+    # Transform is deliberately `(1 - normalize) filtered to top 5%`:
+    #   - The `1 - …` matches save_channel(invert=True) so HIGH = warm
+    #     (damaged), identical to what the Structure PNG visualises.
+    #   - Unlike anomaly_norm (inherently sparse), the inverted deep-sim
+    #     map is DENSE with a long tail across cyan/blue values. Without
+    #     a percentile floor the composite paints magenta on cyan/blue
+    #     regions too. Empirical measurements on the cartoon test pair:
+    #       raw (`(1-_norm)*0.9`):   25% of image, 3% on RED, 96% on BLUE
+    #       without invert:          62% of image, 0% on RED, 99% on BLUE
+    #       with 95th-pct floor:     0.06% of image, 99% on RED, 1% on BLUE  ✓
     _ds = deep_sim[0, 0].cpu().numpy()
     _lo, _hi = float(_ds.min()), float(_ds.max())
     if _hi - _lo > 1e-8:
