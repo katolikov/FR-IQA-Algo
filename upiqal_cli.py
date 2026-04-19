@@ -1256,10 +1256,20 @@ def run_pipeline(args: argparse.Namespace) -> None:
     _anomaly_fallback = (anomaly_norm[0, 0].cpu().numpy() * 0.9).clip(0, 1)
     # Structural similarity has opposite polarity to everything else:
     # HIGH deep_sim = MORE similar = LESS damage. Invert so the "hot =
-    # damaged" contract the composite expects is preserved and damaged-
-    # structure regions actually paint their legend colour instead of
-    # the intact-structure regions falsely lighting up.
-    _structure_damage = (1.0 - deep_sim[0, 0].cpu().numpy()).clip(0, 1)
+    # damaged" contract the composite expects is preserved.
+    #
+    # Raw `1 - deep_sim` is dense — even "identical" regions don't have
+    # deep_sim exactly 1.0, so the inverted background sits at ~0.05-0.1
+    # everywhere and blankets the composite in magenta. Match the sparse
+    # hot-spot look of the anomaly channel by subtracting the 70th
+    # percentile of the inverted signal and rescaling what's left to
+    # [0, 1]; only the top ~30% (the sharpest local drops in similarity)
+    # survive the composite threshold.
+    _raw_structure = np.clip(1.0 - deep_sim[0, 0].cpu().numpy(), 0.0, 1.0)
+    _floor = float(np.percentile(_raw_structure, 70))
+    _suppressed = np.clip(_raw_structure - _floor, 0.0, 1.0)
+    _peak = float(_suppressed.max())
+    _structure_damage = _suppressed / _peak if _peak > 1e-6 else _suppressed
     composite_masks_small = {
         # "blocking" intentionally omitted — no longer a user-visible
         # artefact; its severity still contributes to the heuristic
